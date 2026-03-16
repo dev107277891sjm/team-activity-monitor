@@ -24,6 +24,8 @@
         },
         lightboxImages: [],
         lightboxIndex: 0,
+        lightboxTotalPages: 1,
+        lightboxLoading: false,
         settings: {},
     };
 
@@ -346,7 +348,7 @@
             return;
         }
 
-        const segments = tl.segments || tl.timeline || [];
+        const segments = Array.isArray(tl) ? tl : (tl.segments || tl.timeline || []);
         if (segments.length === 0) {
             const seg = document.createElement("div");
             seg.className = "timeline-segment offline";
@@ -388,8 +390,8 @@
 
     function renderEventMarkers(evRow, userId) {
         const tl = state.timelines[userId];
-        if (!tl || !tl.events) return;
-        const events = tl.events || [];
+        if (!tl) return;
+        const events = Array.isArray(tl) ? [] : (tl.events || []);
         events.forEach((ev) => {
             const time = ev.time || ev.timestamp || "00:00";
             const mins = timeToMinutes(time);
@@ -410,7 +412,11 @@
 
     function timeToMinutes(timeStr) {
         if (!timeStr) return 0;
-        const parts = timeStr.split(":");
+        let t = timeStr;
+        if (t.includes("T")) t = t.split("T")[1];
+        if (t.includes("+")) t = t.split("+")[0];
+        if (t.includes("-") && t.lastIndexOf("-") > 2) t = t.substring(0, t.lastIndexOf("-"));
+        const parts = t.split(":");
         const h = parseInt(parts[0], 10) || 0;
         const m = parseInt(parts[1], 10) || 0;
         return h * 60 + m;
@@ -549,6 +555,7 @@
             const totalPages = data.total_pages || Math.ceil(total / 20) || 1;
 
             state.lightboxImages = items;
+            state.lightboxTotalPages = totalPages;
             grid.innerHTML = "";
 
             if (items.length === 0) {
@@ -557,13 +564,11 @@
             }
 
             items.forEach((item, idx) => {
-                const ip = item.local_ip || state.selectedUserIp;
-                const date = item.date || state.selectedDate;
-                const filename = item.filename || item.file || "";
-                const imgUrl = item.url || `/images/${ip}/${date}/${filename}`;
-                const time = item.time || item.timestamp || "";
-                const proc = item.process || item.active_process || "";
-                const trigger = item.trigger || item.trigger_type || "";
+                const imgUrl = item.image_path || item.url || "";
+                const capturedAt = item.captured_at || "";
+                const time = capturedAt.includes("T") ? capturedAt.split("T")[1].substring(0, 8) : (item.time || "");
+                const proc = item.active_process || item.process || "";
+                const trigger = item.trigger || "";
                 const monitor = item.monitor_index != null ? "Monitor " + item.monitor_index : "";
 
                 const card = document.createElement("div");
@@ -589,54 +594,44 @@
     }
 
     // ── Keystrokes ─────────────────────────────────────────
+    function _fmtTime(isoStr) {
+        if (!isoStr) return "";
+        const t = isoStr.includes("T") ? isoStr.split("T")[1] : isoStr;
+        return t.substring(0, 8);
+    }
+
     async function fetchKeystrokes() {
         const tbody = $("#keystrokes-body");
         const pag = $("#keystrokes-pagination");
-        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted)">Loading...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">Loading...</td></tr>';
         pag.innerHTML = "";
         try {
             const page = state.pages.keystrokes;
             const data = await api("GET",
                 `/api/admin/keystrokes?user_id=${state.selectedUserId}&date=${state.selectedDate}&page=${page}&limit=50`);
-            const items = data.items || data.keystrokes || data.data || [];
+            const items = data.items || [];
             const total = data.total || items.length;
             const totalPages = data.total_pages || Math.ceil(total / 50) || 1;
 
             tbody.innerHTML = "";
             if (items.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted)">No keystroke data.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">No keystroke data.</td></tr>';
                 return;
             }
 
             items.forEach((item) => {
-                const time = item.time || item.timestamp || "";
-                const app = item.application || item.process || "";
-                const keys = item.keystrokes || item.keys || item.text || "";
+                const time = _fmtTime(item.timestamp);
+                const proc = item.active_process || "";
+                const win = item.active_window || "";
+                const key = item.key_data || "";
 
                 const row = document.createElement("tr");
                 row.className = "expandable-row";
                 row.innerHTML =
                     `<td>${escapeHtml(time)}</td>` +
-                    `<td>${escapeHtml(app)}</td>` +
-                    `<td>${escapeHtml(truncate(keys, 60))}</td>`;
-
-                let expanded = false;
-                row.addEventListener("click", () => {
-                    const next = row.nextElementSibling;
-                    if (expanded && next && next.classList.contains("expanded-content")) {
-                        next.remove();
-                        expanded = false;
-                    } else if (!expanded) {
-                        const expRow = document.createElement("tr");
-                        const expTd = document.createElement("td");
-                        expTd.colSpan = 3;
-                        expTd.className = "expanded-content";
-                        expTd.textContent = keys;
-                        expRow.appendChild(expTd);
-                        row.after(expRow);
-                        expanded = true;
-                    }
-                });
+                    `<td>${escapeHtml(proc)}</td>` +
+                    `<td title="${escapeHtml(win)}">${escapeHtml(truncate(win, 30))}</td>` +
+                    `<td><code>${escapeHtml(key)}</code></td>`;
                 tbody.appendChild(row);
             });
 
@@ -645,11 +640,17 @@
                 fetchKeystrokes();
             });
         } catch (_) {
-            tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted)">Failed to load keystrokes.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">Failed to load keystrokes.</td></tr>';
         }
     }
 
     // ── Activities ─────────────────────────────────────────
+    function _calcDurationSec(startIso, endIso) {
+        try {
+            return Math.max(0, Math.round((new Date(endIso) - new Date(startIso)) / 1000));
+        } catch (_) { return 0; }
+    }
+
     async function fetchActivities() {
         const tbody = $("#activities-body");
         const pag = $("#activities-pagination");
@@ -661,7 +662,7 @@
             const page = state.pages.activities;
             const data = await api("GET",
                 `/api/admin/activities?user_id=${state.selectedUserId}&date=${state.selectedDate}&page=${page}&limit=50`);
-            const items = data.items || data.activities || data.data || [];
+            const items = data.items || [];
             const total = data.total || items.length;
             const totalPages = data.total_pages || Math.ceil(total / 50) || 1;
 
@@ -671,12 +672,11 @@
                 return;
             }
 
-            // Usage summary
             const appTotals = {};
             let grandTotal = 0;
             items.forEach((item) => {
-                const proc = item.process || item.application || "Unknown";
-                const dur = item.duration_seconds || item.duration || 0;
+                const proc = item.process_name || "Unknown";
+                const dur = _calcDurationSec(item.started_at, item.ended_at);
                 appTotals[proc] = (appTotals[proc] || 0) + dur;
                 grandTotal += dur;
             });
@@ -696,11 +696,13 @@
             }
 
             items.forEach((item) => {
-                const start = item.start || item.start_time || "";
-                const end = item.end || item.end_time || "";
-                const dur = item.duration_seconds || item.duration || 0;
-                const proc = item.process || item.application || "";
-                const url = item.url || item.window_title || item.title || "";
+                const start = _fmtTime(item.started_at);
+                const end = _fmtTime(item.ended_at);
+                const dur = _calcDurationSec(item.started_at, item.ended_at);
+                const proc = item.process_name || "";
+                const win = item.window_title || "";
+                const url = item.url || "";
+                const detail = url || win;
 
                 const row = document.createElement("tr");
                 row.innerHTML =
@@ -708,7 +710,7 @@
                     `<td>${escapeHtml(end)}</td>` +
                     `<td>${escapeHtml(formatDuration(dur))}</td>` +
                     `<td>${escapeHtml(proc)}</td>` +
-                    `<td title="${escapeHtml(url)}">${escapeHtml(truncate(url, 50))}</td>`;
+                    `<td title="${escapeHtml(win + (url ? ' | ' + url : ''))}">${escapeHtml(truncate(detail, 50))}</td>`;
                 tbody.appendChild(row);
             });
 
@@ -736,7 +738,7 @@
             const page = state.pages.events;
             const data = await api("GET",
                 `/api/admin/events?user_id=${state.selectedUserId}&date=${state.selectedDate}&page=${page}&limit=50`);
-            const items = data.items || data.events || data.data || [];
+            const items = data.items || [];
             const total = data.total || items.length;
             const totalPages = data.total_pages || Math.ceil(total / 50) || 1;
 
@@ -746,9 +748,8 @@
                 return;
             }
 
-            // Alert events
             const alerts = items.filter(ev => {
-                const t = (ev.type || ev.event_type || "").toLowerCase();
+                const t = (ev.event_type || "").toLowerCase();
                 return t.includes("kill") || t.includes("crash") || t.includes("app_stop");
             });
             if (alerts.length > 0) {
@@ -757,17 +758,17 @@
                     const div = document.createElement("div");
                     div.className = "alert-event-item";
                     div.innerHTML =
-                        `<span class="alert-event-time">${escapeHtml(ev.time || ev.timestamp || "")}</span>` +
-                        `<span class="alert-event-type">${escapeHtml(ev.type || ev.event_type || "")}</span>` +
-                        `<span class="alert-event-detail">${escapeHtml(ev.details || ev.description || "")}</span>`;
+                        `<span class="alert-event-time">${escapeHtml(_fmtTime(ev.timestamp))}</span>` +
+                        `<span class="alert-event-type">${escapeHtml(ev.event_type || "")}</span>` +
+                        `<span class="alert-event-detail">${escapeHtml(ev.details || "")}</span>`;
                     alertList.appendChild(div);
                 });
             }
 
             items.forEach((item) => {
-                const time = item.time || item.timestamp || "";
-                const evType = item.type || item.event_type || "";
-                const details = item.details || item.description || "";
+                const time = _fmtTime(item.timestamp);
+                const evType = item.event_type || "";
+                const details = item.details || "";
                 const cls = eventIconClass(evType);
 
                 const row = document.createElement("tr");
@@ -871,18 +872,19 @@
     function renderLightbox() {
         const item = state.lightboxImages[state.lightboxIndex];
         if (!item) return;
-        const ip = item.local_ip || state.selectedUserIp;
-        const date = item.date || state.selectedDate;
-        const filename = item.filename || item.file || "";
-        const imgUrl = item.url || `/images/${ip}/${date}/${filename}`;
-        const time = item.time || item.timestamp || "";
-        const proc = item.process || item.active_process || "";
-        const trigger = item.trigger || item.trigger_type || "";
+        const imgUrl = item.image_path || item.url || "";
+        const capturedAt = item.captured_at || "";
+        const time = capturedAt.includes("T") ? capturedAt.split("T")[1].substring(0, 8) : (item.time || "");
+        const proc = item.active_process || item.process || "";
+        const trigger = item.trigger || "";
         const monitor = item.monitor_index != null ? item.monitor_index : "--";
-        const url = item.url_captured || item.page_url || "";
+        const url = item.active_url || "";
+        const pg = state.pages.screenshots;
+        const tp = state.lightboxTotalPages;
 
         $("#lightbox-img").src = imgUrl;
         $("#lightbox-meta").innerHTML =
+            `<span><span class="label">Page:</span> ${pg}/${tp} &middot; ${state.lightboxIndex + 1}/${state.lightboxImages.length}</span>` +
             `<span><span class="label">Time:</span> ${escapeHtml(time)}</span>` +
             `<span><span class="label">Monitor:</span> ${monitor}</span>` +
             `<span><span class="label">Process:</span> ${escapeHtml(proc)}</span>` +
@@ -890,34 +892,65 @@
             (trigger ? `<span><span class="label">Trigger:</span> ${escapeHtml(trigger)}</span>` : "");
     }
 
+    async function _lightboxFetchPage(page) {
+        if (state.lightboxLoading) return false;
+        state.lightboxLoading = true;
+        try {
+            const data = await api("GET",
+                `/api/admin/screenshots?user_id=${state.selectedUserId}&date=${state.selectedDate}&page=${page}&limit=20`);
+            const items = data.items || [];
+            if (items.length === 0) return false;
+            state.pages.screenshots = page;
+            state.lightboxImages = items;
+            state.lightboxTotalPages = data.total_pages || Math.ceil((data.total || items.length) / 20) || 1;
+            return true;
+        } catch (_) {
+            return false;
+        } finally {
+            state.lightboxLoading = false;
+        }
+    }
+
+    async function lightboxPrev() {
+        if (state.lightboxLoading) return;
+        if (state.lightboxIndex > 0) {
+            state.lightboxIndex--;
+            renderLightbox();
+        } else if (state.pages.screenshots > 1) {
+            const loaded = await _lightboxFetchPage(state.pages.screenshots - 1);
+            if (loaded) {
+                state.lightboxIndex = state.lightboxImages.length - 1;
+                renderLightbox();
+            }
+        }
+    }
+
+    async function lightboxNext() {
+        if (state.lightboxLoading) return;
+        if (state.lightboxIndex < state.lightboxImages.length - 1) {
+            state.lightboxIndex++;
+            renderLightbox();
+        } else if (state.pages.screenshots < state.lightboxTotalPages) {
+            const loaded = await _lightboxFetchPage(state.pages.screenshots + 1);
+            if (loaded) {
+                state.lightboxIndex = 0;
+                renderLightbox();
+            }
+        }
+    }
+
     function initLightbox() {
         $("#lightbox-close-btn").addEventListener("click", closeLightbox);
         $("#lightbox").addEventListener("click", (e) => {
             if (e.target === $("#lightbox")) closeLightbox();
         });
-        $("#lightbox-prev-btn").addEventListener("click", () => {
-            if (state.lightboxIndex > 0) {
-                state.lightboxIndex--;
-                renderLightbox();
-            }
-        });
-        $("#lightbox-next-btn").addEventListener("click", () => {
-            if (state.lightboxIndex < state.lightboxImages.length - 1) {
-                state.lightboxIndex++;
-                renderLightbox();
-            }
-        });
+        $("#lightbox-prev-btn").addEventListener("click", lightboxPrev);
+        $("#lightbox-next-btn").addEventListener("click", lightboxNext);
         document.addEventListener("keydown", (e) => {
             if ($("#lightbox").classList.contains("hidden")) return;
             if (e.key === "Escape") closeLightbox();
-            if (e.key === "ArrowLeft" && state.lightboxIndex > 0) {
-                state.lightboxIndex--;
-                renderLightbox();
-            }
-            if (e.key === "ArrowRight" && state.lightboxIndex < state.lightboxImages.length - 1) {
-                state.lightboxIndex++;
-                renderLightbox();
-            }
+            if (e.key === "ArrowLeft") lightboxPrev();
+            if (e.key === "ArrowRight") lightboxNext();
         });
     }
 

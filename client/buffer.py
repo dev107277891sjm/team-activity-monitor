@@ -3,7 +3,10 @@ import sqlite3
 import uuid
 import threading
 
-from client.config import DATA_DIR
+try:
+    from client.config import DATA_DIR
+except ImportError:
+    from config import DATA_DIR
 
 DB_PATH = os.path.join(DATA_DIR, "buffer.db")
 IMAGES_DIR = os.path.join(DATA_DIR, "images")

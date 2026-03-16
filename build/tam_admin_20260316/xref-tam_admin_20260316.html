@@ -21,13 +21,16 @@ imports:
     <a href="#_collections_abc">_collections_abc</a>
  &#8226;   <a href="#_weakrefset">_weakrefset</a>
  &#8226;   <a href="#abc">abc</a>
+ &#8226;   <a href="#anyio._backends._asyncio">anyio._backends._asyncio</a>
  &#8226;   <a href="#asyncio">asyncio</a>
  &#8226;   <a href="#bcrypt">bcrypt</a>
+ &#8226;   <a href="#bcrypt._bcrypt">bcrypt._bcrypt</a>
  &#8226;   <a href="#codecs">codecs</a>
  &#8226;   <a href="#collections">collections</a>
  &#8226;   <a href="#collections.abc">collections.abc</a>
  &#8226;   <a href="#contextlib">contextlib</a>
  &#8226;   <a href="#copyreg">copyreg</a>
+ &#8226;   <a href="#database">database</a>
  &#8226;   <a href="#datetime">datetime</a>
  &#8226;   <a href="#email.mime.base">email.mime.base</a>
  &#8226;   <a href="#email.mime.multipart">email.mime.multipart</a>
@@ -166,6 +169,8 @@ imports:
  &#8226;   <a href="#keyword">keyword</a>
  &#8226;   <a href="#linecache">linecache</a>
  &#8226;   <a href="#locale">locale</a>
+ &#8226;   <a href="#multipart">multipart</a>
+ &#8226;   <a href="#multipart.multipart">multipart.multipart</a>
  &#8226;   <a href="#ntpath">ntpath</a>
  &#8226;   <a href="#operator">operator</a>
  &#8226;   <a href="#os">os</a>
@@ -189,9 +194,15 @@ imports:
  &#8226;   <a href="#secrets">secrets</a>
  &#8226;   <a href="#server.database">server.database</a>
  &#8226;   <a href="#shutil">shutil</a>
+ &#8226;   <a href="#sqlite3">sqlite3</a>
  &#8226;   <a href="#sre_compile">sre_compile</a>
  &#8226;   <a href="#sre_constants">sre_constants</a>
  &#8226;   <a href="#sre_parse">sre_parse</a>
+ &#8226;   <a href="#starlette.middleware">starlette.middleware</a>
+ &#8226;   <a href="#starlette.middleware.cors">starlette.middleware.cors</a>
+ &#8226;   <a href="#starlette.responses">starlette.responses</a>
+ &#8226;   <a href="#starlette.routing">starlette.routing</a>
+ &#8226;   <a href="#starlette.staticfiles">starlette.staticfiles</a>
  &#8226;   <a href="#stat">stat</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#traceback">traceback</a>
@@ -203,11 +214,17 @@ imports:
  &#8226;   <a href="#uvicorn.lifespan.off">uvicorn.lifespan.off</a>
  &#8226;   <a href="#uvicorn.lifespan.on">uvicorn.lifespan.on</a>
  &#8226;   <a href="#uvicorn.logging">uvicorn.logging</a>
+ &#8226;   <a href="#uvicorn.loops">uvicorn.loops</a>
+ &#8226;   <a href="#uvicorn.loops.asyncio">uvicorn.loops.asyncio</a>
+ &#8226;   <a href="#uvicorn.loops.auto">uvicorn.loops.auto</a>
+ &#8226;   <a href="#uvicorn.protocols">uvicorn.protocols</a>
  &#8226;   <a href="#uvicorn.protocols.http">uvicorn.protocols.http</a>
  &#8226;   <a href="#uvicorn.protocols.http.auto">uvicorn.protocols.http.auto</a>
  &#8226;   <a href="#uvicorn.protocols.http.h11_impl">uvicorn.protocols.http.h11_impl</a>
+ &#8226;   <a href="#uvicorn.protocols.http.httptools_impl">uvicorn.protocols.http.httptools_impl</a>
  &#8226;   <a href="#uvicorn.protocols.websockets">uvicorn.protocols.websockets</a>
  &#8226;   <a href="#uvicorn.protocols.websockets.auto">uvicorn.protocols.websockets.auto</a>
+ &#8226;   <a href="#uvicorn.protocols.websockets.wsproto_impl">uvicorn.protocols.websockets.wsproto_impl</a>
  &#8226;   <a href="#warnings">warnings</a>
  &#8226;   <a href="#weakref">weakref</a>
 
@@ -9500,6 +9517,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#anyio">anyio</a>
+ &#8226;   <a href="#app.py">app.py</a>
 
   </div>
 
@@ -12625,7 +12643,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#bcrypt">bcrypt</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#bcrypt">bcrypt</a>
 
   </div>
 
@@ -17495,6 +17514,17 @@ imported by:
 imported by:
     <a href="#pydantic.v1.version">pydantic.v1.version</a>
  &#8226;   <a href="#zmq.backend.cython._zmq">zmq.backend.cython._zmq</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="database"></a>
+  <a target="code" href="" type="text/plain"><tt>database</tt></a>
+<span class="moduletype">MissingModule</span>  <div class="import">
+imported by:
+    <a href="#app.py">app.py</a>
 
   </div>
 
@@ -24170,6 +24200,7 @@ imported by:
  &#8226;   <a href="#six">six</a>
  &#8226;   <a href="#starlette._utils">starlette._utils</a>
  &#8226;   <a href="#starlette.concurrency">starlette.concurrency</a>
+ &#8226;   <a href="#starlette.middleware.cors">starlette.middleware.cors</a>
  &#8226;   <a href="#starlette.responses">starlette.responses</a>
  &#8226;   <a href="#starlette.routing">starlette.routing</a>
  &#8226;   <a href="#statistics">statistics</a>
@@ -25871,7 +25902,6 @@ imports:
  &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib._bootstrap">importlib._bootstrap</a>
  &#8226;   <a href="#importlib._bootstrap_external">importlib._bootstrap_external</a>
- &#8226;   <a href="#importlib.machinery">importlib.machinery</a>
  &#8226;   <a href="#sys">sys</a>
  &#8226;   <a href="#warnings">warnings</a>
 
@@ -26058,7 +26088,6 @@ imported by:
  &#8226;   <a href="#cffi._imp_emulation">cffi._imp_emulation</a>
  &#8226;   <a href="#cffi.verifier">cffi.verifier</a>
  &#8226;   <a href="#ctypes.util">ctypes.util</a>
- &#8226;   <a href="#importlib">importlib</a>
  &#8226;   <a href="#importlib.abc">importlib.abc</a>
  &#8226;   <a href="#inspect">inspect</a>
  &#8226;   <a href="#jedi.inference.compiled.subprocess.functions">jedi.inference.compiled.subprocess.functions</a>
@@ -38202,7 +38231,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#fastapi.dependencies.utils">fastapi.dependencies.utils</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#fastapi.dependencies.utils">fastapi.dependencies.utils</a>
  &#8226;   <a href="#multipart.decoders">multipart.decoders</a>
  &#8226;   <a href="#multipart.exceptions">multipart.exceptions</a>
  &#8226;   <a href="#multipart.multipart">multipart.multipart</a>
@@ -38271,7 +38301,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#fastapi.dependencies.utils">fastapi.dependencies.utils</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#fastapi.dependencies.utils">fastapi.dependencies.utils</a>
  &#8226;   <a href="#multipart">multipart</a>
  &#8226;   <a href="#starlette.formparsers">starlette.formparsers</a>
  &#8226;   <a href="#starlette.requests">starlette.requests</a>
@@ -66839,6 +66870,7 @@ imported by:
  &#8226;   <a href="#sre_constants">sre_constants</a>
  &#8226;   <a href="#sre_parse">sre_parse</a>
  &#8226;   <a href="#starlette._utils">starlette._utils</a>
+ &#8226;   <a href="#starlette.middleware.cors">starlette.middleware.cors</a>
  &#8226;   <a href="#starlette.routing">starlette.routing</a>
  &#8226;   <a href="#string">string</a>
  &#8226;   <a href="#sysconfig">sysconfig</a>
@@ -72846,6 +72878,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#IPython.core.history">IPython.core.history</a>
+ &#8226;   <a href="#app.py">app.py</a>
  &#8226;   <a href="#nbformat.sign">nbformat.sign</a>
  &#8226;   <a href="#server.database">server.database</a>
  &#8226;   <a href="#sqlite3">sqlite3</a>
@@ -73441,6 +73474,7 @@ imported by:
  &#8226;   <a href="#fastapi.dependencies.utils">fastapi.dependencies.utils</a>
  &#8226;   <a href="#starlette.applications">starlette.applications</a>
  &#8226;   <a href="#starlette.formparsers">starlette.formparsers</a>
+ &#8226;   <a href="#starlette.middleware.cors">starlette.middleware.cors</a>
  &#8226;   <a href="#starlette.requests">starlette.requests</a>
  &#8226;   <a href="#starlette.responses">starlette.responses</a>
  &#8226;   <a href="#starlette.routing">starlette.routing</a>
@@ -73521,9 +73555,11 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#fastapi.applications">fastapi.applications</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#fastapi.applications">fastapi.applications</a>
  &#8226;   <a href="#starlette.applications">starlette.applications</a>
  &#8226;   <a href="#starlette.middleware.base">starlette.middleware.base</a>
+ &#8226;   <a href="#starlette.middleware.cors">starlette.middleware.cors</a>
  &#8226;   <a href="#starlette.middleware.errors">starlette.middleware.errors</a>
  &#8226;   <a href="#starlette.middleware.exceptions">starlette.middleware.exceptions</a>
  &#8226;   <a href="#starlette.routing">starlette.routing</a>
@@ -73552,6 +73588,28 @@ imports:
 imported by:
     <a href="#fastapi.applications">fastapi.applications</a>
  &#8226;   <a href="#starlette.applications">starlette.applications</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="starlette.middleware.cors"></a>
+  <a target="code" href="///C:/Users/Dragon/AppData/Local/Packages/PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0/LocalCache/local-packages/Python312/site-packages/starlette/middleware/cors.py" type="text/plain"><tt>starlette.middleware.cors</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#functools">functools</a>
+ &#8226;   <a href="#re">re</a>
+ &#8226;   <a href="#starlette.datastructures">starlette.datastructures</a>
+ &#8226;   <a href="#starlette.middleware">starlette.middleware</a>
+ &#8226;   <a href="#starlette.responses">starlette.responses</a>
+ &#8226;   <a href="#starlette.types">starlette.types</a>
+ &#8226;   <a href="#typing">typing</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#app.py">app.py</a>
 
   </div>
 
@@ -73680,7 +73738,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#fastapi.applications">fastapi.applications</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#fastapi.applications">fastapi.applications</a>
  &#8226;   <a href="#fastapi.dependencies.utils">fastapi.dependencies.utils</a>
  &#8226;   <a href="#fastapi.exception_handlers">fastapi.exception_handlers</a>
  &#8226;   <a href="#fastapi.openapi.docs">fastapi.openapi.docs</a>
@@ -73689,6 +73748,7 @@ imported by:
  &#8226;   <a href="#fastapi.routing">fastapi.routing</a>
  &#8226;   <a href="#starlette.applications">starlette.applications</a>
  &#8226;   <a href="#starlette.middleware.base">starlette.middleware.base</a>
+ &#8226;   <a href="#starlette.middleware.cors">starlette.middleware.cors</a>
  &#8226;   <a href="#starlette.middleware.errors">starlette.middleware.errors</a>
  &#8226;   <a href="#starlette.middleware.exceptions">starlette.middleware.exceptions</a>
  &#8226;   <a href="#starlette.routing">starlette.routing</a>
@@ -73730,7 +73790,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#fastapi.applications">fastapi.applications</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#fastapi.applications">fastapi.applications</a>
  &#8226;   <a href="#fastapi.openapi.utils">fastapi.openapi.utils</a>
  &#8226;   <a href="#fastapi.routing">fastapi.routing</a>
  &#8226;   <a href="#starlette.applications">starlette.applications</a>
@@ -73763,7 +73824,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#fastapi.staticfiles">fastapi.staticfiles</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#fastapi.staticfiles">fastapi.staticfiles</a>
 
   </div>
 
@@ -73816,6 +73878,7 @@ imported by:
  &#8226;   <a href="#starlette.datastructures">starlette.datastructures</a>
  &#8226;   <a href="#starlette.middleware">starlette.middleware</a>
  &#8226;   <a href="#starlette.middleware.base">starlette.middleware.base</a>
+ &#8226;   <a href="#starlette.middleware.cors">starlette.middleware.cors</a>
  &#8226;   <a href="#starlette.middleware.errors">starlette.middleware.errors</a>
  &#8226;   <a href="#starlette.middleware.exceptions">starlette.middleware.exceptions</a>
  &#8226;   <a href="#starlette.requests">starlette.requests</a>
@@ -78321,6 +78384,7 @@ imported by:
  &#8226;   <a href="#starlette.formparsers">starlette.formparsers</a>
  &#8226;   <a href="#starlette.middleware">starlette.middleware</a>
  &#8226;   <a href="#starlette.middleware.base">starlette.middleware.base</a>
+ &#8226;   <a href="#starlette.middleware.cors">starlette.middleware.cors</a>
  &#8226;   <a href="#starlette.middleware.errors">starlette.middleware.errors</a>
  &#8226;   <a href="#starlette.middleware.exceptions">starlette.middleware.exceptions</a>
  &#8226;   <a href="#starlette.requests">starlette.requests</a>
@@ -81280,7 +81344,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#uvicorn">uvicorn</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#uvicorn">uvicorn</a>
  &#8226;   <a href="#uvicorn.loops.asyncio">uvicorn.loops.asyncio</a>
  &#8226;   <a href="#uvicorn.loops.auto">uvicorn.loops.auto</a>
  &#8226;   <a href="#uvicorn.loops.uvloop">uvicorn.loops.uvloop</a>
@@ -81302,7 +81367,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#uvicorn">uvicorn</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#uvicorn">uvicorn</a>
  &#8226;   <a href="#uvicorn.loops.auto">uvicorn.loops.auto</a>
 
   </div>
@@ -81322,7 +81388,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#uvicorn">uvicorn</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#uvicorn">uvicorn</a>
 
   </div>
 
@@ -81491,7 +81558,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#uvicorn">uvicorn</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#uvicorn">uvicorn</a>
  &#8226;   <a href="#uvicorn.protocols.http">uvicorn.protocols.http</a>
  &#8226;   <a href="#uvicorn.protocols.utils">uvicorn.protocols.utils</a>
  &#8226;   <a href="#uvicorn.protocols.websockets">uvicorn.protocols.websockets</a>
@@ -81622,7 +81690,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#uvicorn">uvicorn</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#uvicorn">uvicorn</a>
  &#8226;   <a href="#uvicorn.protocols.http.auto">uvicorn.protocols.http.auto</a>
  &#8226;   <a href="#uvicorn.server">uvicorn.server</a>
 
@@ -81757,7 +81826,8 @@ imports:
   </div>
   <div class="import">
 imported by:
-    <a href="#uvicorn">uvicorn</a>
+    <a href="#app.py">app.py</a>
+ &#8226;   <a href="#uvicorn">uvicorn</a>
  &#8226;   <a href="#uvicorn.protocols.websockets.auto">uvicorn.protocols.websockets.auto</a>
  &#8226;   <a href="#uvicorn.server">uvicorn.server</a>
 

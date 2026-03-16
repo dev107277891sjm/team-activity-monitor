@@ -29,31 +29,24 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from server.database import (
-    DATA_DIR,
-    add_activities,
-    add_events_batch,
-    add_keystrokes,
-    add_screenshot,
-    cleanup_old_data,
-    create_user,
-    get_activities,
-    get_all_settings,
-    get_all_users,
-    get_disk_usage,
-    get_events,
-    get_keystrokes,
-    get_screenshots,
-    get_setting,
-    get_timeline,
-    get_user,
-    get_user_by_ip,
-    init_db,
-    set_users_offline,
-    update_setting,
-    update_user_heartbeat,
-    update_user_name,
-)
+try:
+    from server.database import (
+        DATA_DIR, add_activities, add_events_batch, add_keystrokes,
+        add_screenshot, cleanup_old_data, create_user, get_activities,
+        get_all_settings, get_all_users, get_disk_usage, get_events,
+        get_keystrokes, get_screenshots, get_setting, get_timeline,
+        get_user, get_user_by_ip, init_db, set_users_offline,
+        update_setting, update_user_heartbeat, update_user_name,
+    )
+except ImportError:
+    from database import (
+        DATA_DIR, add_activities, add_events_batch, add_keystrokes,
+        add_screenshot, cleanup_old_data, create_user, get_activities,
+        get_all_settings, get_all_users, get_disk_usage, get_events,
+        get_keystrokes, get_screenshots, get_setting, get_timeline,
+        get_user, get_user_by_ip, init_db, set_users_offline,
+        update_setting, update_user_heartbeat, update_user_name,
+    )
 
 _KST = timezone(timedelta(hours=9))
 
@@ -521,4 +514,4 @@ app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server.app:app", host="0.0.0.0", port=8007, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=8007, reload=False)

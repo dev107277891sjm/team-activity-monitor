@@ -6,7 +6,10 @@ from typing import Callable
 import pystray
 from PIL import Image, ImageDraw
 
-from client.identity import detect_local_ip
+try:
+    from client.identity import detect_local_ip
+except ImportError:
+    from identity import detect_local_ip
 
 
 def _create_icon(color: str = "green", size: int = 64) -> Image.Image:

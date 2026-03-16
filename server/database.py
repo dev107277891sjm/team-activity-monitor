@@ -546,35 +546,83 @@ def get_events(
 # Timeline builder
 # ---------------------------------------------------------------------------
 
-def get_timeline(user_id: str, date: str) -> list[dict]:
-    """Build timeline segments for a user on a given date from heartbeat events."""
+def get_timeline(user_id: str, date: str) -> dict:
+    """Build timeline segments and events for a user on a given date from all data sources."""
+    date_prefix = f"{date}%"
     conn = get_db()
     try:
-        rows = conn.execute(
-            "SELECT timestamp, details FROM events "
-            "WHERE user_id=? AND event_type='heartbeat' AND timestamp LIKE ? "
-            "ORDER BY timestamp ASC",
-            (user_id, f"{date}%"),
+        timestamps: list[tuple[str, str, str]] = []
+
+        shot_rows = conn.execute(
+            "SELECT captured_at, active_process, trigger FROM screenshots "
+            "WHERE user_id=? AND captured_at LIKE ? ORDER BY captured_at ASC",
+            (user_id, date_prefix),
         ).fetchall()
+        for r in shot_rows:
+            timestamps.append((r["captured_at"], r["active_process"] or "", "ONLINE"))
+
+        act_rows = conn.execute(
+            "SELECT started_at, ended_at, process_name FROM activities "
+            "WHERE user_id=? AND (started_at LIKE ? OR ended_at LIKE ?) ORDER BY started_at ASC",
+            (user_id, date_prefix, date_prefix),
+        ).fetchall()
+        for r in act_rows:
+            timestamps.append((r["started_at"], r["process_name"] or "", "ONLINE"))
+            if r["ended_at"]:
+                timestamps.append((r["ended_at"], r["process_name"] or "", "ONLINE"))
+
+        hb_rows = conn.execute(
+            "SELECT timestamp, details FROM events "
+            "WHERE user_id=? AND LOWER(event_type) IN ('heartbeat','app_start') AND timestamp LIKE ? "
+            "ORDER BY timestamp ASC",
+            (user_id, date_prefix),
+        ).fetchall()
+        for r in hb_rows:
+            try:
+                info = json.loads(r["details"]) if r["details"].startswith("{") else {}
+            except (json.JSONDecodeError, TypeError):
+                info = {}
+            proc = info.get("active_process", "")
+            status = info.get("status", "ONLINE")
+            timestamps.append((r["timestamp"], proc, status))
+
+        event_rows = conn.execute(
+            "SELECT event_type, timestamp, details FROM events "
+            "WHERE user_id=? AND timestamp LIKE ? ORDER BY timestamp ASC",
+            (user_id, date_prefix),
+        ).fetchall()
+        events_out = [
+            {"event_type": r["event_type"], "timestamp": r["timestamp"], "details": r["details"]}
+            for r in event_rows
+        ]
     finally:
         conn.close()
 
+    timestamps.sort(key=lambda x: x[0])
+
+    GAP_SECONDS = 120
     segments: list[dict] = []
-    for row in rows:
-        ts = row["timestamp"]
-        try:
-            info = json.loads(row["details"])
-        except (json.JSONDecodeError, TypeError):
-            info = {}
-        status = info.get("status", "ONLINE")
-        process = info.get("active_process", "")
+    for ts, proc, status in timestamps:
+        if segments:
+            prev_end = segments[-1]["end"]
+            try:
+                from datetime import datetime as _dt
+                fmt = "%Y-%m-%dT%H:%M:%S"
+                t1 = _dt.fromisoformat(prev_end.split(".")[0].split("+")[0])
+                t2 = _dt.fromisoformat(ts.split(".")[0].split("+")[0])
+                gap = (t2 - t1).total_seconds()
+            except Exception:
+                gap = GAP_SECONDS + 1
 
-        if segments and segments[-1]["status"] == status and segments[-1]["process"] == process:
-            segments[-1]["end"] = ts
-        else:
-            segments.append({"start": ts, "end": ts, "status": status, "process": process})
+            if gap <= GAP_SECONDS and segments[-1]["status"] == status:
+                segments[-1]["end"] = ts
+                if proc:
+                    segments[-1]["process"] = proc
+                continue
 
-    return segments
+        segments.append({"start": ts, "end": ts, "status": status, "process": proc})
+
+    return {"segments": segments, "events": events_out}
 
 
 # ---------------------------------------------------------------------------
