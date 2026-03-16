@@ -1,0 +1,7 @@
+mss
+Pillow
+pynput
+psutil
+pystray
+requests
+cryptography

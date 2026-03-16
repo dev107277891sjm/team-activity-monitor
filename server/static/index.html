@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TAM - Team Activity Monitor</title>
+    <link rel="stylesheet" href="/css/style.css?v=2">
+</head>
+<body>
+
+    <!-- LOGIN SCREEN -->
+    <div id="login-screen" class="screen active">
+        <div class="login-container">
+            <div class="login-logo">
+                <svg viewBox="0 0 48 48" width="56" height="56">
+                    <rect x="4" y="8" width="40" height="28" rx="3" fill="none" stroke="#e94560" stroke-width="2.5"/>
+                    <line x1="4" y1="32" x2="44" y2="32" stroke="#e94560" stroke-width="2"/>
+                    <rect x="18" y="36" width="12" height="4" rx="1" fill="#e94560" opacity="0.6"/>
+                    <circle cx="24" cy="20" r="6" fill="none" stroke="#0f3460" stroke-width="2"/>
+                    <path d="M28 24 L32 28" stroke="#e94560" stroke-width="2.5" stroke-linecap="round"/>
+                </svg>
+            </div>
+            <h1 class="login-title">TEAM ACTIVITY MONITOR</h1>
+            <p class="login-subtitle">Admin Dashboard</p>
+            <form id="login-form" autocomplete="off">
+                <div class="form-group">
+                    <label for="login-password">Admin Password</label>
+                    <input type="password" id="login-password" placeholder="Enter admin password" autofocus>
+                </div>
+                <button type="submit" class="btn btn-primary btn-block" id="login-btn">
+                    <span class="btn-text">Sign In</span>
+                    <span class="btn-loader hidden">&#9679;&#9679;&#9679;</span>
+                </button>
+                <p id="login-error" class="error-text hidden"></p>
+            </form>
+        </div>
+    </div>
+
+    <!-- DASHBOARD SCREEN -->
+    <div id="dashboard-screen" class="screen">
+
+        <!-- HEADER -->
+        <header class="header">
+            <div class="header-left">
+                <div class="header-brand">
+                    <svg viewBox="0 0 48 48" width="28" height="28">
+                        <rect x="4" y="8" width="40" height="28" rx="3" fill="none" stroke="#e94560" stroke-width="2.5"/>
+                        <line x1="4" y1="32" x2="44" y2="32" stroke="#e94560" stroke-width="2"/>
+                        <circle cx="24" cy="20" r="5" fill="none" stroke="#0f3460" stroke-width="2"/>
+                        <path d="M28 24 L31 27" stroke="#e94560" stroke-width="2.5" stroke-linecap="round"/>
+                    </svg>
+                    <h1>TEAM ACTIVITY MONITOR</h1>
+                </div>
+            </div>
+            <div class="header-center">
+                <div class="date-nav">
+                    <button class="btn btn-icon" id="prev-day-btn" title="Previous day">
+                        <svg viewBox="0 0 20 20" width="18" height="18"><path d="M12 4 L6 10 L12 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                    <span id="current-date" class="date-display"></span>
+                    <button class="btn btn-icon" id="next-day-btn" title="Next day">
+                        <svg viewBox="0 0 20 20" width="18" height="18"><path d="M8 4 L14 10 L8 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                    <button class="btn btn-icon" id="today-btn" title="Go to today">Today</button>
+                </div>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-icon" id="refresh-btn" title="Refresh now">
+                    <svg viewBox="0 0 20 20" width="18" height="18"><path d="M17 10a7 7 0 1 1-2-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M17 3v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <span id="auto-refresh-indicator" class="refresh-indicator" title="Auto-refreshes every 30s">
+                    <span class="refresh-dot"></span>
+                    <span id="refresh-countdown"></span>
+                </span>
+                <button class="btn btn-icon" id="settings-btn" title="Settings">
+                    <svg viewBox="0 0 20 20" width="18" height="18"><circle cx="10" cy="10" r="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                </button>
+                <button class="btn btn-icon" id="logout-btn" title="Logout">
+                    <svg viewBox="0 0 20 20" width="18" height="18"><path d="M7 3H4a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h3M13 14l4-4-4-4M17 10H7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- MAIN CONTENT -->
+        <main class="main-content">
+
+            <!-- STATS CARDS -->
+            <section class="stats-row">
+                <div class="stat-card stat-online">
+                    <div class="stat-icon">
+                        <svg viewBox="0 0 24 24" width="28" height="28"><circle cx="12" cy="12" r="5" fill="#4CAF50"/><circle cx="12" cy="12" r="9" fill="none" stroke="#4CAF50" stroke-width="2" opacity="0.3"/></svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-online">0</span>
+                        <span class="stat-label">Online</span>
+                    </div>
+                </div>
+                <div class="stat-card stat-idle">
+                    <div class="stat-icon">
+                        <svg viewBox="0 0 24 24" width="28" height="28"><circle cx="12" cy="12" r="5" fill="#FF9800"/><circle cx="12" cy="12" r="9" fill="none" stroke="#FF9800" stroke-width="2" opacity="0.3"/></svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-idle">0</span>
+                        <span class="stat-label">Idle</span>
+                    </div>
+                </div>
+                <div class="stat-card stat-offline">
+                    <div class="stat-icon">
+                        <svg viewBox="0 0 24 24" width="28" height="28"><circle cx="12" cy="12" r="5" fill="#9E9E9E"/><circle cx="12" cy="12" r="9" fill="none" stroke="#9E9E9E" stroke-width="2" opacity="0.3"/></svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-offline">0</span>
+                        <span class="stat-label">Offline</span>
+                    </div>
+                </div>
+                <div class="stat-card stat-total">
+                    <div class="stat-icon">
+                        <svg viewBox="0 0 24 24" width="28" height="28"><circle cx="9" cy="8" r="3.5" fill="none" stroke="#e94560" stroke-width="1.8"/><path d="M2 19c0-3.3 2.7-6 6-6h2c3.3 0 6 2.7 6 6" fill="none" stroke="#e94560" stroke-width="1.8"/><circle cx="17" cy="7" r="2.5" fill="none" stroke="#e94560" stroke-width="1.5" opacity="0.5"/><path d="M18 13c2.2 0 4 1.8 4 4v2" fill="none" stroke="#e94560" stroke-width="1.5" opacity="0.5"/></svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-total">0</span>
+                        <span class="stat-label">Total Members</span>
+                    </div>
+                </div>
+                <div class="stat-card stat-disk">
+                    <div class="stat-icon">
+                        <svg viewBox="0 0 24 24" width="28" height="28"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="#7b68ee" stroke-width="1.8"/><line x1="3" y1="12" x2="21" y2="12" stroke="#7b68ee" stroke-width="1.5" opacity="0.4"/><circle cx="18" cy="8.5" r="1" fill="#7b68ee"/><circle cx="18" cy="15.5" r="1" fill="#7b68ee"/></svg>
+                    </div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-disk">--</span>
+                        <span class="stat-label">Disk Usage</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TIMELINE SECTION -->
+            <section class="timeline-section">
+                <div class="section-header">
+                    <h2>Team Timeline</h2>
+                    <div class="timeline-legend">
+                        <span class="legend-item"><span class="legend-color" style="background:#4CAF50"></span>Working</span>
+                        <span class="legend-item"><span class="legend-color" style="background:#FFC107"></span>Rest</span>
+                        <span class="legend-item"><span class="legend-color" style="background:#FF9800"></span>Idle</span>
+                        <span class="legend-item"><span class="legend-color" style="background:#9E9E9E"></span>Offline</span>
+                        <span class="legend-item"><span class="legend-color" style="background:#F44336"></span>Alert</span>
+                    </div>
+                </div>
+
+                <!-- Time axis -->
+                <div class="timeline-axis">
+                    <div class="timeline-user-label-spacer"></div>
+                    <div class="timeline-hours" id="timeline-hours"></div>
+                </div>
+
+                <div id="timeline-container" class="timeline-container">
+                    <div class="timeline-empty" id="timeline-empty">
+                        <p>No user data available for this date.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- DETAIL PANEL -->
+            <section id="detail-panel" class="detail-panel hidden">
+                <div class="detail-header">
+                    <div class="detail-user-info">
+                        <span class="detail-user-name" id="detail-user-name"></span>
+                        <span class="detail-user-ip" id="detail-user-ip"></span>
+                        <span class="detail-time-range" id="detail-time-range"></span>
+                    </div>
+                    <button class="btn btn-icon" id="detail-close-btn" title="Close detail panel">
+                        <svg viewBox="0 0 20 20" width="16" height="16"><path d="M4 4 L16 16 M16 4 L4 16" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+                    </button>
+                </div>
+                <div class="detail-tabs">
+                    <button class="tab-btn active" data-tab="screenshots">Screenshots</button>
+                    <button class="tab-btn" data-tab="keystrokes">Keystrokes</button>
+                    <button class="tab-btn" data-tab="activities">Processes / URLs</button>
+                    <button class="tab-btn" data-tab="events">Events</button>
+                </div>
+                <div class="detail-content">
+
+                    <!-- SCREENSHOTS TAB -->
+                    <div class="tab-pane active" id="tab-screenshots">
+                        <div class="screenshot-grid" id="screenshot-grid"></div>
+                        <div class="pagination" id="screenshots-pagination"></div>
+                    </div>
+
+                    <!-- KEYSTROKES TAB -->
+                    <div class="tab-pane" id="tab-keystrokes">
+                        <table class="data-table" id="keystrokes-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Application</th>
+                                    <th>Keystrokes</th>
+                                </tr>
+                            </thead>
+                            <tbody id="keystrokes-body"></tbody>
+                        </table>
+                        <div class="pagination" id="keystrokes-pagination"></div>
+                    </div>
+
+                    <!-- PROCESSES / URLS TAB -->
+                    <div class="tab-pane" id="tab-activities">
+                        <div class="activity-chart-container" id="activity-chart-container">
+                            <h3>App Usage Summary</h3>
+                            <div class="app-usage-bars" id="app-usage-bars"></div>
+                        </div>
+                        <table class="data-table" id="activities-table">
+                            <thead>
+                                <tr>
+                                    <th>Start</th>
+                                    <th>End</th>
+                                    <th>Duration</th>
+                                    <th>Process</th>
+                                    <th>Window / URL</th>
+                                </tr>
+                            </thead>
+                            <tbody id="activities-body"></tbody>
+                        </table>
+                        <div class="pagination" id="activities-pagination"></div>
+                    </div>
+
+                    <!-- EVENTS TAB -->
+                    <div class="tab-pane" id="tab-events">
+                        <div id="alert-events" class="alert-events hidden">
+                            <h3>Alerts</h3>
+                            <div id="alert-events-list"></div>
+                        </div>
+                        <table class="data-table" id="events-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Event</th>
+                                    <th>Details</th>
+                                </tr>
+                            </thead>
+                            <tbody id="events-body"></tbody>
+                        </table>
+                        <div class="pagination" id="events-pagination"></div>
+                    </div>
+
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- SETTINGS MODAL -->
+    <div id="settings-modal" class="modal-overlay hidden">
+        <div class="modal settings-modal">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="btn btn-icon modal-close-btn" id="settings-close-btn">
+                    <svg viewBox="0 0 20 20" width="16" height="16"><path d="M4 4 L16 16 M16 4 L4 16" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-tabs">
+                    <button class="stab-btn active" data-stab="general">General</button>
+                    <button class="stab-btn" data-stab="capture">Capture</button>
+                    <button class="stab-btn" data-stab="detection">Detection</button>
+                    <button class="stab-btn" data-stab="keylog">Keystroke</button>
+                    <button class="stab-btn" data-stab="retention">Retention</button>
+                    <button class="stab-btn" data-stab="email">Email</button>
+                    <button class="stab-btn" data-stab="admin">Admin</button>
+                    <button class="stab-btn" data-stab="users">Users</button>
+                </div>
+                <div class="settings-content">
+
+                    <!-- GENERAL -->
+                    <div class="stab-pane active" id="stab-general">
+                        <h3>System Timezone</h3>
+                        <div class="form-group">
+                            <label for="setting-timezone">Timezone</label>
+                            <select id="setting-timezone">
+                                <option value="UTC">UTC</option>
+                                <option value="US/Eastern">US/Eastern</option>
+                                <option value="US/Central">US/Central</option>
+                                <option value="US/Mountain">US/Mountain</option>
+                                <option value="US/Pacific">US/Pacific</option>
+                                <option value="Europe/London">Europe/London</option>
+                                <option value="Europe/Paris">Europe/Paris</option>
+                                <option value="Europe/Berlin">Europe/Berlin</option>
+                                <option value="Europe/Moscow">Europe/Moscow</option>
+                                <option value="Asia/Dubai">Asia/Dubai</option>
+                                <option value="Asia/Kolkata">Asia/Kolkata</option>
+                                <option value="Asia/Bangkok">Asia/Bangkok</option>
+                                <option value="Asia/Shanghai">Asia/Shanghai</option>
+                                <option value="Asia/Tokyo">Asia/Tokyo</option>
+                                <option value="Asia/Seoul">Asia/Seoul</option>
+                                <option value="Asia/Manila">Asia/Manila</option>
+                                <option value="Australia/Sydney">Australia/Sydney</option>
+                                <option value="Pacific/Auckland">Pacific/Auckland</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- CAPTURE -->
+                    <div class="stab-pane" id="stab-capture">
+                        <h3>Capture Settings</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-capture-interval">Interval (seconds)</label>
+                                <input type="number" id="setting-capture-interval" min="5" max="600" value="60">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-capture-quality">Quality (1-100)</label>
+                                <input type="number" id="setting-capture-quality" min="1" max="100" value="50">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-capture-maxwidth">Max Width (px)</label>
+                                <input type="number" id="setting-capture-maxwidth" min="320" max="3840" value="1920">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="setting-capture-on-process-change">
+                                <span class="toggle-switch"></span>
+                                Capture on process change
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="setting-capture-skip-unchanged">
+                                <span class="toggle-switch"></span>
+                                Skip unchanged screenshots
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- DETECTION -->
+                    <div class="stab-pane" id="stab-detection">
+                        <h3>Activity Detection</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-rest-threshold">Rest threshold (seconds)</label>
+                                <input type="number" id="setting-rest-threshold" min="10" max="3600" value="120">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-idle-threshold">Idle threshold (seconds)</label>
+                                <input type="number" id="setting-idle-threshold" min="30" max="7200" value="300">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-heartbeat-interval">Heartbeat interval (seconds)</label>
+                                <input type="number" id="setting-heartbeat-interval" min="5" max="300" value="30">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-offline-threshold">Offline threshold (seconds)</label>
+                                <input type="number" id="setting-offline-threshold" min="30" max="3600" value="180">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- KEYSTROKE -->
+                    <div class="stab-pane" id="stab-keylog">
+                        <h3>Keystroke Logging</h3>
+                        <div class="form-group">
+                            <label for="setting-keystroke-batch-interval">Batch interval (seconds)</label>
+                            <input type="number" id="setting-keystroke-batch-interval" min="5" max="300" value="30">
+                        </div>
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="setting-keystroke-log-special" checked>
+                                <span class="toggle-switch"></span>
+                                Log special keys (Ctrl, Alt, etc.)
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- RETENTION -->
+                    <div class="stab-pane" id="stab-retention">
+                        <h3>Data Retention (days)</h3>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-retention-screenshots">Screenshots</label>
+                                <input type="number" id="setting-retention-screenshots" min="1" max="365" value="30">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-retention-keystrokes">Keystrokes</label>
+                                <input type="number" id="setting-retention-keystrokes" min="1" max="365" value="30">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-retention-activities">Activities</label>
+                                <input type="number" id="setting-retention-activities" min="1" max="365" value="60">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-retention-events">Events</label>
+                                <input type="number" id="setting-retention-events" min="1" max="365" value="90">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- EMAIL -->
+                    <div class="stab-pane" id="stab-email">
+                        <h3>Email Alert Settings</h3>
+                        <div class="form-group">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="setting-email-enabled">
+                                <span class="toggle-switch"></span>
+                                Enable email alerts
+                            </label>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-smtp-host">SMTP Host</label>
+                                <input type="text" id="setting-smtp-host" placeholder="smtp.gmail.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-smtp-port">SMTP Port</label>
+                                <input type="number" id="setting-smtp-port" min="1" max="65535" value="587">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="setting-smtp-user">SMTP User</label>
+                                <input type="text" id="setting-smtp-user" placeholder="user@example.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-smtp-password">SMTP Password</label>
+                                <input type="password" id="setting-smtp-password" placeholder="password">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="setting-alert-recipients">Alert Recipients (comma-separated)</label>
+                            <input type="text" id="setting-alert-recipients" placeholder="admin@example.com, manager@example.com">
+                        </div>
+                    </div>
+
+                    <!-- ADMIN -->
+                    <div class="stab-pane" id="stab-admin">
+                        <h3>Change Admin Password</h3>
+                        <div class="form-group">
+                            <label for="setting-admin-current-pw">Current Password</label>
+                            <input type="password" id="setting-admin-current-pw" placeholder="Current password">
+                        </div>
+                        <div class="form-group">
+                            <label for="setting-admin-new-pw">New Password</label>
+                            <input type="password" id="setting-admin-new-pw" placeholder="New password">
+                        </div>
+                        <div class="form-group">
+                            <label for="setting-admin-confirm-pw">Confirm New Password</label>
+                            <input type="password" id="setting-admin-confirm-pw" placeholder="Confirm new password">
+                        </div>
+                        <button class="btn btn-primary" id="change-password-btn">Change Password</button>
+                        <p id="password-change-msg" class="msg-text hidden"></p>
+                    </div>
+
+                    <!-- USERS -->
+                    <div class="stab-pane" id="stab-users">
+                        <h3>User Management</h3>
+                        <table class="data-table" id="settings-users-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>IP Address</th>
+                                    <th>Status</th>
+                                    <th>Last Seen</th>
+                                </tr>
+                            </thead>
+                            <tbody id="settings-users-body"></tbody>
+                        </table>
+                    </div>
+
+                </div>
+            </div>
+            <div class="modal-footer" id="settings-modal-footer">
+                <button class="btn btn-secondary" id="settings-reset-btn">Reset</button>
+                <button class="btn btn-primary" id="settings-save-btn">Save Settings</button>
+                <p id="settings-save-msg" class="msg-text hidden"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCREENSHOT LIGHTBOX -->
+    <div id="lightbox" class="modal-overlay hidden">
+        <div class="lightbox-container">
+            <button class="btn btn-icon lightbox-close" id="lightbox-close-btn">
+                <svg viewBox="0 0 20 20" width="20" height="20"><path d="M4 4 L16 16 M16 4 L4 16" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </button>
+            <button class="btn btn-icon lightbox-nav lightbox-prev" id="lightbox-prev-btn">
+                <svg viewBox="0 0 20 20" width="24" height="24"><path d="M13 4 L7 10 L13 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="lightbox-image-wrap">
+                <img id="lightbox-img" src="" alt="Screenshot">
+            </div>
+            <button class="btn btn-icon lightbox-nav lightbox-next" id="lightbox-next-btn">
+                <svg viewBox="0 0 20 20" width="24" height="24"><path d="M7 4 L13 10 L7 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="lightbox-meta" id="lightbox-meta"></div>
+        </div>
+    </div>
+
+    <!-- TOOLTIP (global, positioned dynamically) -->
+    <div id="tooltip" class="tooltip hidden"></div>
+
+    <script src="/js/dashboard.js"></script>
+</body>
+</html>
