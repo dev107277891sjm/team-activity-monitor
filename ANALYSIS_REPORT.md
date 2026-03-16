@@ -57,13 +57,13 @@ All data is uploaded over the **local area network (LAN)** to the **admin's PC**
 │  ┌─────────────┐  ┌──────────────┐  ┌───────────────────────┐  │
 │  │  REST API    │  │  Database    │  │  Screenshot Storage   │  │
 │  │  (FastAPI)   │  │  (SQLite)    │  │  (Local Disk Folder)  │  │
-│  │  Port: 8000  │  │              │  │  E:\TAM_Data\images\  │  │
+│  │  Port: 8007  │  │              │  │  E:\TAM_Data\images\  │  │
 │  └──────┬──────┘  └──────┬───────┘  └───────────┬───────────┘  │
 │         └────────────────┼──────────────────────┘               │
 │  ┌─────────────┐  ┌──────────────┐                              │
 │  │  Web UI      │  │  Alert       │                              │
 │  │  (Dashboard) │  │  (Email/SMTP)│                              │
-│  │  Port: 8000  │  │              │                              │
+│  │  Port: 8007  │  │              │                              │
 │  └─────────────┘  └──────────────┘                              │
 └─────────────────────────┬───────────────────────────────────────┘
                           │ LAN (HTTP)
@@ -119,7 +119,7 @@ All data is uploaded over the **local area network (LAN)** to the **admin's PC**
 | **REST API (FastAPI)** | Receives data from User Apps over LAN, serves data to Admin Dashboard |
 | **Database (SQLite)** | Stores metadata, logs, user profiles, events, settings — single file on local disk |
 | **File Storage (Local Disk)** | Stores screenshot images in organized folder structure (e.g., `E:\TAM_Data\images\{user_ip}\{date}\`) |
-| **Web Dashboard** | Served by FastAPI on the same port — admin opens browser to `http://localhost:8000` |
+| **Web Dashboard** | Served by FastAPI on the same port — admin opens browser to `http://localhost:8007` |
 | **Authentication** | API key for User Apps; single admin password for Dashboard login |
 | **Data Cleanup** | Scheduled task to auto-delete data older than 90 days |
 
@@ -267,7 +267,7 @@ The User App should be **minimal and unobtrusive**. It runs in the **system tray
 │                                         │
 │   Local IP:  192.168.1.45 (detected)    │
 │                                         │
-│   Server:    192.168.1.100:8000 (LAN)   │
+│   Server:    192.168.1.100:8007 (LAN)   │
 │              ● Connected                │
 │                                         │
 │              [ Register ]               │
@@ -310,7 +310,7 @@ The User App should be **minimal and unobtrusive**. It runs in the **system tray
 
 ### 6.1 Design Philosophy
 
-The Admin App is a **local web application** running on the admin's PC. The FastAPI server hosts both the REST API and the dashboard web UI. The admin simply opens a browser to `http://localhost:8000` to access the full dashboard. No internet required.
+The Admin App is a **local web application** running on the admin's PC. The FastAPI server hosts both the REST API and the dashboard web UI. The admin simply opens a browser to `http://localhost:8007` to access the full dashboard. No internet required.
 
 ### 6.2 Main Dashboard Layout
 
@@ -575,14 +575,55 @@ The Admin App is a **local web application** running on the admin's PC. The Fast
 | **Local Server** | FastAPI (Python) | High-performance async REST API + serves web dashboard |
 | **Database** | SQLite | Zero-config, single-file DB, no installation needed, handles our scale easily |
 | **File Storage** | Local disk folder | Screenshots saved as JPEG files in organized directory structure |
-| **Admin Dashboard** | HTML + CSS + JavaScript (served by FastAPI) | Rich interactive web UI; admin opens `http://localhost:8000` |
+| **Admin Dashboard** | HTML + CSS + JavaScript (served by FastAPI) | Rich interactive web UI; admin opens `http://localhost:8007` |
 | **Image Compression** | Pillow (PIL) | JPEG compression before upload |
 | **Networking** | HTTP over LAN + API Keys | Fast local transfer; no internet needed |
 | **Alert System** | Email notification via SMTP (Gmail/Outlook) | Notifies admin when user app goes down |
 | **Local Buffer (User)** | SQLite | Offline data buffering on user PC when server unavailable |
 | **Auto-Cleanup** | Scheduled task (APScheduler) | Deletes data older than 90 days from disk + DB |
+| **Packaging** | PyInstaller (`--onefile`) | Both User App and Admin App compiled into a **single .exe file** each — no Python installation required on target PCs |
 
-### 7.2 User App — Execution Strategy
+### 7.2 Distribution — Single .exe Files
+
+Both apps are compiled into **standalone single executable files** using PyInstaller. No Python installation, no dependencies, no extra folders — just one `.exe` per app.
+
+| Deliverable | File | What It Contains | External Files |
+|------------|------|-----------------|----------------|
+| **User App** | `tam_user_YYYYMMDD.exe` (e.g., `tam_user_20260316.exe`) | Screen capturer, keylogger, process monitor, uploader, local buffer, self-protection, tray icon — all bundled | `buffer.db` (SQLite, auto-created at runtime) + `images/` folder (auto-created) |
+| **Admin App** | `tam_admin_YYYYMMDD.exe` (e.g., `tam_admin_20260316.exe`) | FastAPI server, web dashboard (HTML/CSS/JS embedded), database manager, email alerter — all bundled | `tam.db` (SQLite, auto-created at runtime) + `images/` folder (auto-created) |
+
+**How it works:**
+
+```
+User PC — just copy and run:
+───────────────────────────
+tam_user_20260316.exe     ← Single file, ~30-50 MB (date = publish date)
+  └── (on first run, auto-creates:)
+      C:\ProgramData\TAM\
+      ├── buffer.db       ← Local SQLite buffer (auto-created)
+      ├── config.json     ← Server IP + credentials (auto-created after registration)
+      └── images\         ← Buffered screenshots (auto-created)
+
+Admin PC — just copy and run:
+─────────────────────────────
+tam_admin_20260316.exe    ← Single file, ~40-60 MB (date = publish date)
+  └── (on first run, auto-creates:)
+      E:\TAM_Data\
+      ├── tam.db          ← Main SQLite database (auto-created)
+      └── images\         ← All screenshots from all users (auto-created)
+          ├── 192.168.1.45\
+          ├── 192.168.1.46\
+          └── ...
+```
+
+**Key points:**
+- **No Python required** on any PC — everything is bundled inside the .exe
+- **No installation wizard** — just copy the .exe to the target PC and run it
+- **Database files are external** — SQLite `.db` files are created at runtime and live outside the .exe (so data persists across updates)
+- **Web dashboard assets** (HTML, CSS, JS) are embedded inside the admin `.exe` — no extra files needed
+- **Updating** — just replace the `.exe` file; database and images are preserved
+
+### 7.3 User App — Execution Strategy
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -608,7 +649,7 @@ The Admin App is a **local web application** running on the admin's PC. The Fast
 └─────────────────────────────────────────────┘
 ```
 
-### 7.3 Data Flow
+### 7.4 Data Flow
 
 ```
 User PCs (on LAN)                       Admin PC (Server + Dashboard)
@@ -623,7 +664,7 @@ User PCs (on LAN)                       Admin PC (Server + Dashboard)
                                                             (If app-down detected)
                                                             SMTP → Email alert to Admin
 
-                                        Admin opens browser to http://localhost:8000:
+                                        Admin opens browser to http://localhost:8007:
                                         ├── Dashboard ──────► SQLite (select)
                                         ├── Timeline ───────► SQLite (select)
                                         ├── Screenshots ────► Local disk (read files)
@@ -632,7 +673,7 @@ User PCs (on LAN)                       Admin PC (Server + Dashboard)
                                         └── Settings ───────► SQLite (update)
 ```
 
-### 7.4 Capture Trigger Logic
+### 7.5 Capture Trigger Logic
 
 ```python
 # Pseudocode for capture decision
@@ -668,13 +709,13 @@ while running:
 | **Process change** | No — always capture | New process = new context worth recording |
 | **Periodic interval** | **Yes — skip if screen unchanged** | Avoids storing duplicate images |
 
-### 7.5 Identity & Registration Flow
+### 7.6 Identity & Registration Flow
 
 ```
 FIRST RUN:
 1. Detect local IP address (e.g., 192.168.1.45)
 2. Show registration dialog → user enters name + admin server IP (e.g., 192.168.1.100)
-3. Send POST http://192.168.1.100:8000/api/register { local_ip, display_name }
+3. Send POST http://192.168.1.100:8007/api/register { local_ip, display_name }
 4. Server creates user profile, returns user_id + API key
 5. Store user_id + API key + server_ip locally (encrypted)
 
@@ -686,7 +727,7 @@ SUBSEQUENT RUNS:
 
 NAME CHANGE:
 1. User selects "Change Name" from tray menu
-2. Enter new name → Send PUT http://{server_ip}:8000/api/users/{id}/name { new_name }
+2. Enter new name → Send PUT http://{server_ip}:8007/api/users/{id}/name { new_name }
 3. Server updates display_name, keeps local_ip unchanged
 ```
 
@@ -769,7 +810,7 @@ C:\ProgramData\TAM\
 ┌─────────────────────────────────────────────────────────────────┐
 │  USER APP — CONNECTION MONITOR (runs every 5 seconds)           │
 │                                                                  │
-│  1. Try to reach admin server: GET http://{server_ip}:8000/ping │
+│  1. Try to reach admin server: GET http://{server_ip}:8007/ping │
 │     │                                                            │
 │     ├── SUCCESS (server is online)                               │
 │     │   │                                                        │
@@ -918,7 +959,7 @@ Skipping unchanged screens typically saves 30-60% of screenshots. Realistic esti
 
 ### 10.4 Built-in Optimization: Skip Unchanged Screens
 
-The system **skips periodic captures when the screen has not changed** (see Section 7.4). This is enabled by default and typically reduces screenshot storage by **30-60%**, bringing the realistic 90-day estimate closer to **~20-35 GB** instead of ~49 GB.
+The system **skips periodic captures when the screen has not changed** (see Section 7.5). This is enabled by default and typically reduces screenshot storage by **30-60%**, bringing the realistic 90-day estimate closer to **~20-35 GB** instead of ~49 GB.
 
 ### 10.5 Additional Optimization (if disk space is tight)
 
@@ -985,11 +1026,13 @@ The system **skips periodic captures when the screen has not changed** (see Sect
 - [ ] Auto-cleanup: scheduled task to delete data older than 90 days
 - [ ] Disk space monitor: warn admin if free space < 20 GB
 
-### Phase 5: Testing & Deployment (Week 7)
+### Phase 5: Packaging, Testing & Deployment (Week 7)
+- [ ] Package User App into single `tam_user_YYYYMMDD.exe` using PyInstaller (`--onefile`)
+- [ ] Package Admin App into single `tam_admin_YYYYMMDD.exe` using PyInstaller (`--onefile`)
+- [ ] Verify .exe runs without Python installed on a clean Windows 11 PC
 - [ ] End-to-end testing with team members on LAN
 - [ ] Performance optimization (LAN transfer speed, image compression)
-- [ ] Installer creation (User App — silent install with server IP config)
-- [ ] Server auto-start: set up FastAPI server as Windows service on admin PC
+- [ ] Server auto-start: register admin `.exe` as Windows service on admin PC
 - [ ] Documentation
 
 ---
@@ -1004,12 +1047,13 @@ The system **skips periodic captures when the screen has not changed** (see Sect
 | 4 | Keystroke Privacy | **Fully captured** — no masking, including passwords |
 | 5 | User Notification | **Silent** — users are NOT informed that monitoring is active |
 | 6 | Admin Access | **Single admin only** (the manager) |
-| 7 | Remote Access | **No** — Admin Dashboard accessed via `http://localhost:8000` |
+| 7 | Remote Access | **No** — Admin Dashboard accessed via `http://localhost:8007` |
 | 8 | Alert Notifications | **Yes** — email notification via SMTP when a user's app goes down |
 | 9 | User Scalability | **Dynamic** — users can be added at any time, no fixed limit |
 | 10 | Storage | **Local disk** — ~49 GB for 5 users / 90 days (easily fits on any modern drive) |
 | 11 | Offline Buffering | **User Apps buffer all data locally** when admin PC is off or LAN is down; auto-sync when reconnected |
 | 12 | Timezone | **GMT+9 (Asia/Seoul)** as default for all timestamps; admin can change it from Settings |
+| 13 | Distribution | **Single .exe** per app with publish date in filename (e.g., `tam_user_20260316.exe`); no Python needed; DB files are external |
 
 ---
 
@@ -1019,7 +1063,7 @@ This system consists of **two applications running on the office LAN:**
 
 1. **User App** (installed on each team member's PC) — A persistent, silent Windows service that captures screenshots (all monitors), logs all keystrokes (including passwords), tracks active processes/URLs, and uploads everything to the admin's local server over the LAN. It auto-starts on boot, resists being stopped, and runs without notifying the user. New users can be added at any time by installing the app on a new PC. **When the admin server is unreachable (PC off or LAN down), the User App continues capturing and buffers all data locally. When the server comes back, all buffered data is automatically synced — no data is ever lost.**
 
-2. **Admin Server + Dashboard** (runs on the manager's PC) — A FastAPI local server with SQLite database and local disk storage. It receives all monitoring data from User Apps (including backlogged data from offline periods), stores screenshots as JPEG files on the local hard drive, and serves a web-based dashboard at `http://localhost:8000`. The dashboard shows real-time user status through color-coded timeline bars, with detailed viewers for screenshots, keystroke logs, process history, and system events. Email alerts notify the admin when a user's app goes down.
+2. **Admin Server + Dashboard** (runs on the manager's PC) — A FastAPI local server with SQLite database and local disk storage. It receives all monitoring data from User Apps (including backlogged data from offline periods), stores screenshots as JPEG files on the local hard drive, and serves a web-based dashboard at `http://localhost:8007`. The dashboard shows real-time user status through color-coded timeline bars, with detailed viewers for screenshots, keystroke logs, process history, and system events. Email alerts notify the admin when a user's app goes down.
 
 **Key characteristics:**
 - **Zero cost:** No cloud services, no subscriptions — everything runs locally
