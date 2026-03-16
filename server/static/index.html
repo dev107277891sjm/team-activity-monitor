@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TAM - Team Activity Monitor</title>
-    <link rel="stylesheet" href="/css/style.css?v=2">
+    <link rel="stylesheet" href="/css/style.css?v=4">
 </head>
 <body>
 
@@ -181,28 +181,29 @@
 
                     <!-- SCREENSHOTS TAB -->
                     <div class="tab-pane active" id="tab-screenshots">
+                        <div class="pagination pagination-top" id="screenshots-pagination"></div>
                         <div class="screenshot-grid" id="screenshot-grid"></div>
-                        <div class="pagination" id="screenshots-pagination"></div>
                     </div>
 
                     <!-- KEYSTROKES TAB -->
                     <div class="tab-pane" id="tab-keystrokes">
+                        <div class="pagination pagination-top" id="keystrokes-pagination"></div>
                         <table class="data-table" id="keystrokes-table">
                             <thead>
                                 <tr>
                                     <th>Time</th>
                                     <th>Process</th>
                                     <th>Window</th>
-                                    <th>Key</th>
+                                    <th>Keystrokes</th>
                                 </tr>
                             </thead>
                             <tbody id="keystrokes-body"></tbody>
                         </table>
-                        <div class="pagination" id="keystrokes-pagination"></div>
                     </div>
 
                     <!-- PROCESSES / URLS TAB -->
                     <div class="tab-pane" id="tab-activities">
+                        <div class="pagination pagination-top" id="activities-pagination"></div>
                         <div class="activity-chart-container" id="activity-chart-container">
                             <h3>App Usage Summary</h3>
                             <div class="app-usage-bars" id="app-usage-bars"></div>
@@ -219,11 +220,11 @@
                             </thead>
                             <tbody id="activities-body"></tbody>
                         </table>
-                        <div class="pagination" id="activities-pagination"></div>
                     </div>
 
                     <!-- EVENTS TAB -->
                     <div class="tab-pane" id="tab-events">
+                        <div class="pagination pagination-top" id="events-pagination"></div>
                         <div id="alert-events" class="alert-events hidden">
                             <h3>Alerts</h3>
                             <div id="alert-events-list"></div>
@@ -238,7 +239,6 @@
                             </thead>
                             <tbody id="events-body"></tbody>
                         </table>
-                        <div class="pagination" id="events-pagination"></div>
                     </div>
 
                 </div>
@@ -501,6 +501,6 @@
     <!-- TOOLTIP (global, positioned dynamically) -->
     <div id="tooltip" class="tooltip hidden"></div>
 
-    <script src="/js/dashboard.js"></script>
+    <script src="/js/dashboard.js?v=4"></script>
 </body>
 </html>

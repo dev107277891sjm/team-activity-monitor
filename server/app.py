@@ -34,7 +34,8 @@ try:
         DATA_DIR, add_activities, add_events_batch, add_keystrokes,
         add_screenshot, cleanup_old_data, create_user, get_activities,
         get_all_settings, get_all_users, get_disk_usage, get_events,
-        get_keystrokes, get_screenshots, get_setting, get_timeline,
+        get_keystrokes, get_keystrokes_grouped, get_screenshots,
+        get_setting, get_timeline,
         get_user, get_user_by_ip, init_db, set_users_offline,
         update_setting, update_user_heartbeat, update_user_name,
     )
@@ -43,7 +44,8 @@ except ImportError:
         DATA_DIR, add_activities, add_events_batch, add_keystrokes,
         add_screenshot, cleanup_old_data, create_user, get_activities,
         get_all_settings, get_all_users, get_disk_usage, get_events,
-        get_keystrokes, get_screenshots, get_setting, get_timeline,
+        get_keystrokes, get_keystrokes_grouped, get_screenshots,
+        get_setting, get_timeline,
         get_user, get_user_by_ip, init_db, set_users_offline,
         update_setting, update_user_heartbeat, update_user_name,
     )
@@ -422,11 +424,15 @@ async def admin_keystrokes(
     date: Optional[str] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    grouped: bool = True,
     page: int = 1,
     limit: int = 50,
     _admin: bool = Depends(require_admin),
 ):
-    items, total = get_keystrokes(user_id, date, start_time, end_time, page, limit)
+    if grouped:
+        items, total = get_keystrokes_grouped(user_id, date, page, limit)
+    else:
+        items, total = get_keystrokes(user_id, date, start_time, end_time, page, limit)
     return {"items": items, "total": total, "page": page, "limit": limit}
 
 

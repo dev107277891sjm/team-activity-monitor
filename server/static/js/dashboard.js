@@ -393,19 +393,23 @@
         if (!tl) return;
         const events = Array.isArray(tl) ? [] : (tl.events || []);
         events.forEach((ev) => {
-            const time = ev.time || ev.timestamp || "00:00";
-            const mins = timeToMinutes(time);
+            const rawTime = ev.timestamp || ev.time || "00:00";
+            const mins = timeToMinutes(rawTime);
             const leftPct = (mins / 1440) * 100;
             const marker = document.createElement("div");
-            const evType = (ev.type || ev.event_type || "").toLowerCase();
+            const evType = (ev.event_type || ev.type || "").toLowerCase();
             let cls = "default";
-            if (evType.includes("boot") || evType.includes("startup")) cls = "boot";
-            else if (evType.includes("shutdown")) cls = "shutdown";
+            let label = ev.event_type || ev.type || "event";
+            if (evType.includes("boot") || evType.includes("start")) {
+                cls = "boot";
+                label = evType.includes("app") ? "App Start" : "Start";
+            } else if (evType.includes("shutdown") || evType.includes("off")) cls = "shutdown";
             else if (evType.includes("kill") || evType.includes("crash") || evType.includes("stop")) cls = "alert";
-            else if (evType.includes("restart")) cls = "restart";
+            else if (evType.includes("restart") || evType.includes("reboot")) cls = "restart";
+            else if (evType.includes("heartbeat")) return;
             marker.className = "timeline-event-marker " + cls;
             marker.style.left = leftPct + "%";
-            marker.title = time + " - " + (ev.type || ev.event_type || "event");
+            marker.title = _fmtTime(rawTime) + " – " + label;
             evRow.appendChild(marker);
         });
     }
@@ -448,12 +452,12 @@
     // ── Tooltip ────────────────────────────────────────────
     function showTooltip(e, seg) {
         const tt = $("#tooltip");
-        const startT = seg.start || seg.start_time || "--";
-        const endT = seg.end || seg.end_time || "--";
+        const startT = _fmtTime(seg.start || seg.start_time || "--");
+        const endT = _fmtTime(seg.end || seg.end_time || "--");
         const status = seg.status || "unknown";
         const proc = seg.process || seg.active_process || "";
         tt.innerHTML =
-            `<div class="tt-time">${escapeHtml(startT)} - ${escapeHtml(endT)}</div>` +
+            `<div class="tt-time">${escapeHtml(startT)} ~ ${escapeHtml(endT)}</div>` +
             `<div class="tt-status">Status: ${escapeHtml(status)}</div>` +
             (proc ? `<div class="tt-process">${escapeHtml(proc)}</div>` : "");
         tt.classList.remove("hidden");
@@ -608,7 +612,7 @@
         try {
             const page = state.pages.keystrokes;
             const data = await api("GET",
-                `/api/admin/keystrokes?user_id=${state.selectedUserId}&date=${state.selectedDate}&page=${page}&limit=50`);
+                `/api/admin/keystrokes?user_id=${state.selectedUserId}&date=${state.selectedDate}&page=${page}&limit=50&grouped=true`);
             const items = data.items || [];
             const total = data.total || items.length;
             const totalPages = data.total_pages || Math.ceil(total / 50) || 1;
@@ -620,10 +624,11 @@
             }
 
             items.forEach((item) => {
-                const time = _fmtTime(item.timestamp);
+                const time = _fmtTime(item.start_time || item.timestamp);
                 const proc = item.active_process || "";
                 const win = item.active_window || "";
-                const key = item.key_data || "";
+                const keys = item.keys || item.key_data || "";
+                const count = item.count || 1;
 
                 const row = document.createElement("tr");
                 row.className = "expandable-row";
@@ -631,7 +636,32 @@
                     `<td>${escapeHtml(time)}</td>` +
                     `<td>${escapeHtml(proc)}</td>` +
                     `<td title="${escapeHtml(win)}">${escapeHtml(truncate(win, 30))}</td>` +
-                    `<td><code>${escapeHtml(key)}</code></td>`;
+                    `<td><code class="keystroke-text">${escapeHtml(truncate(keys, 80))}</code> <span style="color:var(--text-muted);font-size:0.75rem">(${count})</span></td>`;
+
+                let expanded = false;
+                if (keys.length > 80) {
+                    row.style.cursor = "pointer";
+                    row.addEventListener("click", () => {
+                        const next = row.nextElementSibling;
+                        if (expanded && next && next.classList.contains("expanded-content")) {
+                            next.remove();
+                            expanded = false;
+                        } else if (!expanded) {
+                            const expRow = document.createElement("tr");
+                            expRow.classList.add("expanded-content");
+                            const expTd = document.createElement("td");
+                            expTd.colSpan = 4;
+                            expTd.className = "expanded-content";
+                            expTd.style.whiteSpace = "pre-wrap";
+                            expTd.style.wordBreak = "break-all";
+                            expTd.style.fontFamily = "monospace";
+                            expTd.textContent = keys;
+                            expRow.appendChild(expTd);
+                            row.after(expRow);
+                            expanded = true;
+                        }
+                    });
+                }
                 tbody.appendChild(row);
             });
 

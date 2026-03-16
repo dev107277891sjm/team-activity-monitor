@@ -417,6 +417,84 @@ def get_keystrokes(
         conn.close()
 
 
+def _parse_iso_naive(ts: str) -> "datetime":
+    """Parse ISO timestamp, strip timezone/fractional for comparison."""
+    clean = ts.split(".")[0].split("+")[0]
+    if clean.endswith("Z"):
+        clean = clean[:-1]
+    idx = clean.rfind("-")
+    if idx > 10:
+        clean = clean[:idx]
+    return datetime.fromisoformat(clean)
+
+
+def get_keystrokes_grouped(
+    user_id: Optional[str] = None,
+    date: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50,
+) -> tuple[list[dict], int]:
+    """Group keystrokes by process+window within 10-second windows."""
+    conditions: list[str] = []
+    params: list[Any] = []
+    if user_id:
+        conditions.append("user_id=?")
+        params.append(user_id)
+    if date:
+        conditions.append("timestamp LIKE ?")
+        params.append(f"{date}%")
+
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            f"SELECT timestamp, key_data, active_process, active_window FROM keystrokes{where} ORDER BY timestamp ASC",
+            params,
+        ).fetchall()
+
+        GAP_SEC = 10
+        groups: list[dict] = []
+        for r in rows:
+            ts = r["timestamp"]
+            key = r["key_data"] or ""
+            proc = r["active_process"] or ""
+            win = r["active_window"] or ""
+
+            merged = False
+            if groups:
+                g = groups[-1]
+                if g["active_process"] == proc and g["active_window"] == win:
+                    try:
+                        t1 = _parse_iso_naive(g["end_time"])
+                        t2 = _parse_iso_naive(ts)
+                        if (t2 - t1).total_seconds() <= GAP_SEC:
+                            g["keys"] += key
+                            g["end_time"] = ts
+                            g["count"] += 1
+                            merged = True
+                    except Exception:
+                        pass
+
+            if not merged:
+                groups.append({
+                    "start_time": ts,
+                    "end_time": ts,
+                    "active_process": proc,
+                    "active_window": win,
+                    "keys": key,
+                    "count": 1,
+                })
+
+        groups.reverse()
+        total = len(groups)
+        offset = (page - 1) * limit
+        paged = groups[offset:offset + limit]
+        return paged, total
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Activities CRUD
 # ---------------------------------------------------------------------------
@@ -549,6 +627,9 @@ def get_events(
 def get_timeline(user_id: str, date: str) -> dict:
     """Build timeline segments and events for a user on a given date from all data sources."""
     date_prefix = f"{date}%"
+    day_start_str = f"{date}T00:00:00"
+    day_end_str = f"{date}T23:59:59"
+
     conn = get_db()
     try:
         timestamps: list[tuple[str, str, str]] = []
@@ -563,13 +644,33 @@ def get_timeline(user_id: str, date: str) -> dict:
 
         act_rows = conn.execute(
             "SELECT started_at, ended_at, process_name FROM activities "
-            "WHERE user_id=? AND (started_at LIKE ? OR ended_at LIKE ?) ORDER BY started_at ASC",
-            (user_id, date_prefix, date_prefix),
+            "WHERE user_id=? AND ("
+            "  started_at LIKE ? OR ended_at LIKE ?"
+            "  OR (started_at < ? AND ended_at > ?)"
+            ") ORDER BY started_at ASC",
+            (user_id, date_prefix, date_prefix, day_start_str, day_start_str),
         ).fetchall()
         for r in act_rows:
-            timestamps.append((r["started_at"], r["process_name"] or "", "ONLINE"))
-            if r["ended_at"]:
-                timestamps.append((r["ended_at"], r["process_name"] or "", "ONLINE"))
+            sa = r["started_at"] or ""
+            ea = r["ended_at"] or ""
+            proc = r["process_name"] or ""
+            if sa and sa < day_start_str:
+                sa = day_start_str
+            if ea and ea > day_end_str:
+                ea = day_end_str
+            if sa:
+                timestamps.append((sa, proc, "ONLINE"))
+            if ea:
+                timestamps.append((ea, proc, "ONLINE"))
+
+        ks_rows = conn.execute(
+            "SELECT MIN(timestamp) as first_ts, MAX(timestamp) as last_ts FROM keystrokes "
+            "WHERE user_id=? AND timestamp LIKE ?",
+            (user_id, date_prefix),
+        ).fetchone()
+        if ks_rows and ks_rows["first_ts"]:
+            timestamps.append((ks_rows["first_ts"], "", "ONLINE"))
+            timestamps.append((ks_rows["last_ts"], "", "ONLINE"))
 
         hb_rows = conn.execute(
             "SELECT timestamp, details FROM events "
@@ -578,8 +679,9 @@ def get_timeline(user_id: str, date: str) -> dict:
             (user_id, date_prefix),
         ).fetchall()
         for r in hb_rows:
+            det = r["details"] or ""
             try:
-                info = json.loads(r["details"]) if r["details"].startswith("{") else {}
+                info = json.loads(det) if det.startswith("{") else {}
             except (json.JSONDecodeError, TypeError):
                 info = {}
             proc = info.get("active_process", "")
@@ -600,29 +702,67 @@ def get_timeline(user_id: str, date: str) -> dict:
 
     timestamps.sort(key=lambda x: x[0])
 
-    GAP_SECONDS = 120
-    segments: list[dict] = []
+    GAP_SECONDS = 180
+    raw_segments: list[dict] = []
     for ts, proc, status in timestamps:
-        if segments:
-            prev_end = segments[-1]["end"]
+        if raw_segments:
             try:
-                from datetime import datetime as _dt
-                fmt = "%Y-%m-%dT%H:%M:%S"
-                t1 = _dt.fromisoformat(prev_end.split(".")[0].split("+")[0])
-                t2 = _dt.fromisoformat(ts.split(".")[0].split("+")[0])
+                t1 = _parse_iso_naive(raw_segments[-1]["end"])
+                t2 = _parse_iso_naive(ts)
                 gap = (t2 - t1).total_seconds()
             except Exception:
                 gap = GAP_SECONDS + 1
 
-            if gap <= GAP_SECONDS and segments[-1]["status"] == status:
-                segments[-1]["end"] = ts
+            if gap <= GAP_SECONDS:
+                raw_segments[-1]["end"] = ts
                 if proc:
-                    segments[-1]["process"] = proc
+                    raw_segments[-1]["process"] = proc
                 continue
 
-        segments.append({"start": ts, "end": ts, "status": status, "process": proc})
+        raw_segments.append({"start": ts, "end": ts, "status": "ONLINE", "process": proc})
 
-    return {"segments": segments, "events": events_out}
+    day_start_dt = _parse_iso_naive(day_start_str)
+    day_end_dt = _parse_iso_naive(day_end_str)
+
+    def _clamp_ts(ts_str: str) -> "datetime":
+        try:
+            t = _parse_iso_naive(ts_str)
+            if t < day_start_dt:
+                return day_start_dt
+            if t > day_end_dt:
+                return day_end_dt
+            return t
+        except Exception:
+            return day_start_dt
+
+    def _ts_to_str(dt: "datetime") -> str:
+        return f"{date}T{dt.strftime('%H:%M:%S')}"
+
+    final_segments: list[dict] = []
+    for i, seg in enumerate(raw_segments):
+        if i > 0:
+            prev_end = _clamp_ts(raw_segments[i - 1]["end"])
+            seg_start = _clamp_ts(seg["start"])
+            if prev_end < seg_start:
+                final_segments.append({
+                    "start": _ts_to_str(prev_end),
+                    "end": _ts_to_str(seg_start),
+                    "status": "OFFLINE",
+                    "process": "",
+                })
+        seg_start = _clamp_ts(seg["start"])
+        seg_end = _clamp_ts(seg["end"])
+        if seg_end <= seg_start or (seg_end - seg_start).total_seconds() < 30:
+            seg_end = min(seg_start + timedelta(seconds=60), day_end_dt)
+        if seg_start < seg_end:
+            final_segments.append({
+                "start": _ts_to_str(seg_start),
+                "end": _ts_to_str(seg_end),
+                "status": seg.get("status", "ONLINE"),
+                "process": seg.get("process", ""),
+            })
+
+    return {"segments": final_segments, "events": events_out}
 
 
 # ---------------------------------------------------------------------------
