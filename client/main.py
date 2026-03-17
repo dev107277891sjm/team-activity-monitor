@@ -7,6 +7,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 try:
+    from client.activity_tracker import ActivityTracker
+    from client.alert_sender import configure as alert_configure, install_crash_handler, send_app_stop
     from client.buffer import LocalBuffer
     from client.capturer import capture_all_screens, compute_screen_hash
     from client.config import (
@@ -27,6 +29,8 @@ try:
     from client.tray import TrayIcon
     from client.uploader import Uploader
 except ImportError:
+    from activity_tracker import ActivityTracker
+    from alert_sender import configure as alert_configure, install_crash_handler, send_app_stop
     from buffer import LocalBuffer
     from capturer import capture_all_screens, compute_screen_hash
     from config import (
@@ -85,6 +89,12 @@ class TAMClient:
         self._last_screen_hash = ""
         self._last_process_info: dict | None = None
         self._capture_lock = threading.Lock()
+        self._capture_skip_keyboard_idle_sec = 20
+        self._capture_wait_max_sec = 480
+        self._activity_tracker: ActivityTracker | None = None
+        self._idle_threshold_rest_sec = 180
+        self._idle_threshold_idle_sec = 420
+        self._mouse_listener = None
 
     def _now(self) -> str:
         return datetime.now(self._tz).isoformat()
@@ -138,10 +148,18 @@ class TAMClient:
                 self._tz = ZoneInfo(self._tz_str)
             if settings.get("capture_interval"):
                 self._capture_interval = int(settings["capture_interval"])
+            rest = settings.get("idle_threshold_rest")
+            idle = settings.get("idle_threshold_idle")
+            if rest is not None:
+                self._idle_threshold_rest_sec = int(rest)
+            if idle is not None:
+                self._idle_threshold_idle_sec = int(idle)
             logger.info(
-                "Server settings: timezone=%s, capture_interval=%ds",
+                "Server settings: timezone=%s, capture_interval=%ds, idle_rest=%ds, idle_idle=%ds",
                 self._tz_str,
                 self._capture_interval,
+                self._idle_threshold_rest_sec,
+                self._idle_threshold_idle_sec,
             )
         except Exception as exc:
             logger.warning("Could not fetch server settings: %s", exc)
@@ -171,15 +189,25 @@ class TAMClient:
 
     def _screen_capture_thread(self):
         logger.info("Screen capture thread started (interval=%ds)", self._capture_interval)
+        wait_sec = self._capture_interval
         while not self._shutdown.is_set():
+            self._shutdown.wait(wait_sec)
+            if self._shutdown.is_set():
+                break
             try:
                 current_hash = compute_screen_hash()
                 if current_hash != self._last_screen_hash:
                     self._last_screen_hash = current_hash
-                    self._capture_and_upload(trigger="periodic")
+                    keyboard_idle = self._activity_tracker.get_keyboard_idle_seconds() if self._activity_tracker else 0
+                    process_unchanged = not self._process_monitor.has_process_changed(self._last_process_info)
+                    if keyboard_idle > self._capture_skip_keyboard_idle_sec and process_unchanged:
+                        wait_sec = min(wait_sec * 2, self._capture_wait_max_sec)
+                    else:
+                        self._capture_and_upload(trigger="periodic")
+                        wait_sec = self._capture_interval
             except Exception as exc:
                 logger.error("Screen capture thread error: %s", exc)
-            self._shutdown.wait(self._capture_interval)
+                wait_sec = self._capture_interval
 
     def _process_monitor_thread(self):
         logger.info("Process monitor thread started")
@@ -237,10 +265,17 @@ class TAMClient:
             try:
                 local_ip = get_local_ip()
                 window_info = self._process_monitor.get_active_window_info() if self._process_monitor else {}
+                idle_sec = self._activity_tracker.get_idle_seconds() if self._activity_tracker else 0
+                if idle_sec >= self._idle_threshold_idle_sec:
+                    status = "IDLE"
+                elif idle_sec >= self._idle_threshold_rest_sec:
+                    status = "REST"
+                else:
+                    status = "ONLINE"
                 self._uploader.send_heartbeat(
                     user_id=self._config["user_id"],
                     local_ip=local_ip,
-                    status="ONLINE",
+                    status=status,
                     active_process=window_info.get("process_name", ""),
                     active_window=window_info.get("window_title", ""),
                 )
@@ -295,6 +330,13 @@ class TAMClient:
         )
         self._tray.set_current_name(self._config.get("display_name", ""))
 
+        alert_configure(
+            self._server_url,
+            self._config["api_key"],
+            self._config["user_id"],
+        )
+        install_crash_handler()
+
         self._fetch_settings()
 
         self._buffer = LocalBuffer()
@@ -302,11 +344,32 @@ class TAMClient:
         self._conn_monitor = ConnectionMonitor(self._server_url)
         self._conn_monitor.on_reconnect = lambda: None
 
+        self._activity_tracker = ActivityTracker()
+
+        def _on_activity():
+            self._activity_tracker.update()
+
+        def _on_keyboard_activity():
+            self._activity_tracker.update_keyboard()
+
         self._keylogger = KeyLogger(
             timezone_str=self._tz_str,
             process_info_callback=self._process_monitor.get_active_window_info,
+            on_activity=_on_keyboard_activity,
         )
         self._keylogger.start()
+
+        try:
+            from pynput import mouse
+            self._mouse_listener = mouse.Listener(
+                on_move=lambda *_: _on_activity(),
+                on_click=lambda *_: _on_activity(),
+                on_scroll=lambda *_: _on_activity(),
+            )
+            self._mouse_listener.daemon = True
+            self._mouse_listener.start()
+        except Exception as exc:
+            logger.warning("Mouse listener not started (idle detection keyboard-only): %s", exc)
 
         start_event = {
             "id": uuid.uuid4().hex,
@@ -337,6 +400,15 @@ class TAMClient:
             logger.info("Keyboard interrupt received.")
         finally:
             self._shutdown.set()
+            try:
+                send_app_stop()
+            except Exception as exc:
+                logger.debug("APP_STOP send failed: %s", exc)
+            if self._mouse_listener:
+                try:
+                    self._mouse_listener.stop()
+                except Exception:
+                    pass
             if self._keylogger:
                 self._keylogger.stop()
 

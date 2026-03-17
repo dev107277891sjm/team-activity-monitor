@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -6,6 +7,15 @@ from datetime import datetime
 def build():
     date_str = datetime.now().strftime("%Y%m%d")
     name = f"tam_user_{date_str}"
+    exe_path = os.path.join("dist", f"{name}.exe")
+
+    if os.path.exists(exe_path):
+        print("Note: Close any running tam_user.exe before building, or the build will fail with 'Access denied'.")
+
+    spec_path = f"{name}.spec"
+    if os.path.exists(spec_path):
+        os.remove(spec_path)
+        print(f"Removed stale {spec_path} (will be regenerated)")
 
     hidden_imports = [
         "pynput.keyboard._win32",
@@ -29,6 +39,8 @@ def build():
         "PIL",
         "PIL.Image",
         "PIL.ImageDraw",
+        "activity_tracker",
+        "alert_sender",
         "buffer",
         "capturer",
         "config",
@@ -38,10 +50,11 @@ def build():
         "process_monitor",
         "tray",
         "uploader",
-        "service",
     ]
 
     client_modules = [
+        "client/activity_tracker.py",
+        "client/alert_sender.py",
         "client/buffer.py",
         "client/capturer.py",
         "client/config.py",
@@ -51,7 +64,6 @@ def build():
         "client/process_monitor.py",
         "client/tray.py",
         "client/uploader.py",
-        "client/service.py",
     ]
 
     cmd = [

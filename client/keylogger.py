@@ -46,16 +46,32 @@ for i in range(1, 13):
     _SPECIAL_KEYS[getattr(keyboard.Key, f"f{i}")] = f"[F{i}]"
 
 
+def _key_id(key):
+    """Return a hashable id for the key (for tracking pressed state)."""
+    if hasattr(key, "vk"):
+        return ("kc", key.vk, getattr(key, "char", None))
+    return ("k", key)
+
+
 class KeyLogger:
-    def __init__(self, timezone_str: str = "Asia/Seoul", process_info_callback=None):
+    def __init__(self, timezone_str: str = "Asia/Seoul", process_info_callback=None, on_activity=None):
         self._tz = ZoneInfo(timezone_str)
         self._buffer: list[dict] = []
         self._lock = threading.Lock()
         self._listener: keyboard.Listener | None = None
         self._process_info_callback = process_info_callback
+        self._on_activity = on_activity
+        self._keys_down: set = set()
 
     def _on_press(self, key):
         try:
+            if key is None:
+                return
+            kid = _key_id(key)
+            if kid in self._keys_down:
+                return
+            self._keys_down.add(kid)
+
             if key in _SPECIAL_KEYS:
                 key_data = _SPECIAL_KEYS[key]
             elif hasattr(key, "char") and key.char is not None:
@@ -80,13 +96,27 @@ class KeyLogger:
 
             with self._lock:
                 self._buffer.append(entry)
+            if self._on_activity:
+                try:
+                    self._on_activity()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _on_release(self, key):
+        try:
+            if key is None:
+                return
+            kid = _key_id(key)
+            self._keys_down.discard(kid)
         except Exception:
             pass
 
     def start(self):
         if self._listener is not None:
             return
-        self._listener = keyboard.Listener(on_press=self._on_press)
+        self._listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
         self._listener.daemon = True
         self._listener.start()
 
@@ -94,6 +124,7 @@ class KeyLogger:
         if self._listener is not None:
             self._listener.stop()
             self._listener = None
+            self._keys_down.clear()
 
     def get_and_clear_buffer(self) -> list[dict]:
         with self._lock:

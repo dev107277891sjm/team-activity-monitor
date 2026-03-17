@@ -117,8 +117,8 @@ _DEFAULT_SETTINGS: dict[str, str] = {
     "keylog_batch_interval": "60",
     "image_quality": "60",
     "image_max_width": "1920",
-    "idle_threshold_rest": "5",
-    "idle_threshold_idle": "15",
+    "idle_threshold_rest": "180",
+    "idle_threshold_idle": "420",
     "heartbeat_interval": "30",
     "offline_threshold": "60",
     "retention_days": "90",
@@ -630,7 +630,10 @@ def get_timeline(user_id: str, date: str) -> dict:
     day_start_str = f"{date}T00:00:00"
     day_end_str = f"{date}T23:59:59"
 
+    offline_threshold_sec = int(get_setting("offline_threshold") or _DEFAULT_SETTINGS.get("offline_threshold", "60"))
+
     conn = get_db()
+    keystroke_count = 0
     try:
         timestamps: list[tuple[str, str, str]] = []
 
@@ -697,6 +700,16 @@ def get_timeline(user_id: str, date: str) -> dict:
             {"event_type": r["event_type"], "timestamp": r["timestamp"], "details": r["details"]}
             for r in event_rows
         ]
+
+        keystroke_count = 0
+        try:
+            kc_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM keystrokes WHERE user_id=? AND timestamp LIKE ?",
+                (user_id, date_prefix),
+            ).fetchone()
+            keystroke_count = kc_row["cnt"] if kc_row else 0
+        except Exception:
+            pass
     finally:
         conn.close()
 
@@ -713,13 +726,15 @@ def get_timeline(user_id: str, date: str) -> dict:
             except Exception:
                 gap = GAP_SECONDS + 1
 
-            if gap <= GAP_SECONDS:
+            prev_status = (raw_segments[-1].get("status") or "ONLINE").upper()
+            curr_status = (status or "ONLINE").upper()
+            if gap <= GAP_SECONDS and prev_status == curr_status:
                 raw_segments[-1]["end"] = ts
                 if proc:
                     raw_segments[-1]["process"] = proc
                 continue
 
-        raw_segments.append({"start": ts, "end": ts, "status": "ONLINE", "process": proc})
+        raw_segments.append({"start": ts, "end": ts, "status": status, "process": proc})
 
     day_start_dt = _parse_iso_naive(day_start_str)
     day_end_dt = _parse_iso_naive(day_end_str)
@@ -743,13 +758,24 @@ def get_timeline(user_id: str, date: str) -> dict:
         if i > 0:
             prev_end = _clamp_ts(raw_segments[i - 1]["end"])
             seg_start = _clamp_ts(seg["start"])
-            if prev_end < seg_start:
-                final_segments.append({
-                    "start": _ts_to_str(prev_end),
-                    "end": _ts_to_str(seg_start),
-                    "status": "OFFLINE",
-                    "process": "",
-                })
+            gap_sec = (seg_start - prev_end).total_seconds()
+            if gap_sec > 0:
+                if gap_sec >= offline_threshold_sec:
+                    final_segments.append({
+                        "start": _ts_to_str(prev_end),
+                        "end": _ts_to_str(seg_start),
+                        "status": "OFFLINE",
+                        "process": "",
+                    })
+                else:
+                    idle_rest_sec = int(get_setting("idle_threshold_rest") or _DEFAULT_SETTINGS.get("idle_threshold_rest", "180"))
+                    gap_status = "IDLE" if gap_sec >= idle_rest_sec else "REST"
+                    final_segments.append({
+                        "start": _ts_to_str(prev_end),
+                        "end": _ts_to_str(seg_start),
+                        "status": gap_status,
+                        "process": "",
+                    })
         seg_start = _clamp_ts(seg["start"])
         seg_end = _clamp_ts(seg["end"])
         if seg_end <= seg_start or (seg_end - seg_start).total_seconds() < 30:
@@ -762,7 +788,33 @@ def get_timeline(user_id: str, date: str) -> dict:
                 "process": seg.get("process", ""),
             })
 
-    return {"segments": final_segments, "events": events_out}
+    work_sec = rest_sec = idle_sec = offline_sec = 0
+    for seg in final_segments:
+        try:
+            s = _parse_iso_naive(seg["start"])
+            e = _parse_iso_naive(seg["end"])
+            dur = (e - s).total_seconds()
+        except Exception:
+            dur = 0
+        st = (seg.get("status") or "").upper()
+        if st in ("WORKING", "ACTIVE", "ONLINE") or "ALERT" in st:
+            work_sec += dur
+        elif st == "REST":
+            rest_sec += dur
+        elif st == "IDLE":
+            idle_sec += dur
+        else:
+            offline_sec += dur
+
+    summary = {
+        "work_seconds": int(work_sec),
+        "rest_seconds": int(rest_sec),
+        "idle_seconds": int(idle_sec),
+        "offline_seconds": int(offline_sec),
+        "keystroke_count": keystroke_count,
+    }
+
+    return {"segments": final_segments, "events": events_out, "summary": summary}
 
 
 # ---------------------------------------------------------------------------

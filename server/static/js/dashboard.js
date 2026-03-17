@@ -27,6 +27,8 @@
         lightboxTotalPages: 1,
         lightboxLoading: false,
         settings: {},
+        isBackgroundRefresh: false,
+        expandedKeystrokeIndex: null,
     };
 
     // ── Helpers ────────────────────────────────────────────
@@ -77,6 +79,11 @@
     function truncate(str, len) {
         if (!str) return "";
         return str.length > len ? str.substring(0, len) + "..." : str;
+    }
+
+    function formatKeystrokesForDisplay(keys) {
+        if (!keys) return "";
+        return String(keys).replace(/\[Space\]/g, " ");
     }
 
     // ── DOM Shortcuts ──────────────────────────────────────
@@ -218,17 +225,44 @@
     }
 
     // ── Refresh All ────────────────────────────────────────
-    async function refreshAll() {
-        await Promise.all([
-            fetchStats(),
-            fetchUsers(),
-            fetchDiskUsage(),
-        ]);
-        await fetchAllTimelines();
+    function _saveScrollPositions() {
+        const tl = $("#timeline-container");
+        return {
+            window: window.scrollY || document.documentElement.scrollTop,
+            timeline: tl ? tl.scrollTop : 0,
+        };
+    }
+    function _restoreScrollPositions(pos) {
+        if (!pos) return;
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                window.scrollTo(0, pos.window || 0);
+                const tl = $("#timeline-container");
+                if (tl && pos.timeline != null) tl.scrollTop = pos.timeline;
+            });
+        });
+    }
 
-        if (state.selectedUserId) {
-            refreshDetailTab();
+    async function refreshAll() {
+        const scrollPos = _saveScrollPositions();
+        state.isBackgroundRefresh = true;
+
+        try {
+            await Promise.all([
+                fetchStats(),
+                fetchUsers(),
+                fetchDiskUsage(),
+            ]);
+            await fetchAllTimelines();
+
+            if (state.selectedUserId) {
+                await refreshDetailTab();
+            }
+        } finally {
+            state.isBackgroundRefresh = false;
         }
+
+        _restoreScrollPositions(scrollPos);
     }
 
     // ── Stats ──────────────────────────────────────────────
@@ -335,6 +369,46 @@
 
             row.addEventListener("click", () => selectUser(u));
             container.appendChild(row);
+        });
+
+        renderTimelineSummary();
+    }
+
+    function renderTimelineSummary() {
+        const tbody = $("#timeline-summary-body");
+        const section = $("#timeline-summary-section");
+        if (!tbody || !section) return;
+
+        if (state.users.length === 0) {
+            section.classList.add("hidden");
+            return;
+        }
+        section.classList.remove("hidden");
+
+        tbody.innerHTML = "";
+        state.users.forEach((u) => {
+            const uid = u.user_id || u.id;
+            const tl = state.timelines[uid];
+            const sum = tl && tl.summary ? tl.summary : {};
+            const work = sum.work_seconds ?? 0;
+            const rest = sum.rest_seconds ?? 0;
+            const idle = sum.idle_seconds ?? 0;
+            const offline = sum.offline_seconds ?? 0;
+            const keys = sum.keystroke_count ?? 0;
+
+            const row = document.createElement("tr");
+            row.className = "timeline-summary-row" + (uid === state.selectedUserId ? " selected" : "");
+            row.dataset.userId = uid;
+            row.innerHTML =
+                `<td class="summary-user">${escapeHtml(u.display_name || u.name || uid)}</td>` +
+                `<td>${formatDuration(work)}</td>` +
+                `<td>${formatDuration(rest)}</td>` +
+                `<td>${formatDuration(idle)}</td>` +
+                `<td>${formatDuration(offline)}</td>` +
+                `<td>${keys}</td>`;
+            row.style.cursor = "pointer";
+            row.addEventListener("click", () => selectUser(u));
+            tbody.appendChild(row);
         });
     }
 
@@ -488,6 +562,9 @@
         $$(".timeline-row").forEach((r) => {
             r.classList.toggle("selected", r.dataset.userId === String(uid));
         });
+        $$(".timeline-summary-row").forEach((r) => {
+            r.classList.toggle("selected", r.dataset.userId === String(uid));
+        });
 
         $("#detail-user-name").textContent = state.selectedUserName;
         $("#detail-user-ip").textContent = state.selectedUserIp;
@@ -504,6 +581,7 @@
         state.pages.keystrokes = 1;
         state.pages.activities = 1;
         state.pages.events = 1;
+        state.expandedKeystrokeIndex = null;
         refreshDetailTab();
     }
 
@@ -512,7 +590,9 @@
             $("#detail-panel").classList.add("hidden");
             state.selectedUserId = null;
             state.selectedTimeRange = null;
+            state.expandedKeystrokeIndex = null;
             $$(".timeline-row").forEach(r => r.classList.remove("selected"));
+            $$(".timeline-summary-row").forEach(r => r.classList.remove("selected"));
         });
     }
 
@@ -535,21 +615,23 @@
         return btn ? btn.dataset.tab : "screenshots";
     }
 
-    function refreshDetailTab() {
+    async function refreshDetailTab() {
         if (!state.selectedUserId) return;
         const tab = activeTab();
-        if (tab === "screenshots") fetchScreenshots();
-        else if (tab === "keystrokes") fetchKeystrokes();
-        else if (tab === "activities") fetchActivities();
-        else if (tab === "events") fetchEvents();
+        if (tab === "screenshots") await fetchScreenshots();
+        else if (tab === "keystrokes") await fetchKeystrokes();
+        else if (tab === "activities") await fetchActivities();
+        else if (tab === "events") await fetchEvents();
     }
 
     // ── Screenshots ────────────────────────────────────────
     async function fetchScreenshots() {
         const grid = $("#screenshot-grid");
         const pag = $("#screenshots-pagination");
-        grid.innerHTML = '<p style="color:var(--text-muted);padding:20px">Loading...</p>';
-        pag.innerHTML = "";
+        if (!state.isBackgroundRefresh) {
+            grid.innerHTML = '<p style="color:var(--text-muted);padding:20px">Loading...</p>';
+            pag.innerHTML = "";
+        }
         try {
             const page = state.pages.screenshots;
             const data = await api("GET",
@@ -607,8 +689,10 @@
     async function fetchKeystrokes() {
         const tbody = $("#keystrokes-body");
         const pag = $("#keystrokes-pagination");
-        tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">Loading...</td></tr>';
-        pag.innerHTML = "";
+        if (!state.isBackgroundRefresh) {
+            tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted)">Loading...</td></tr>';
+            pag.innerHTML = "";
+        }
         try {
             const page = state.pages.keystrokes;
             const data = await api("GET",
@@ -623,30 +707,31 @@
                 return;
             }
 
-            items.forEach((item) => {
+            items.forEach((item, idx) => {
                 const time = _fmtTime(item.start_time || item.timestamp);
                 const proc = item.active_process || "";
                 const win = item.active_window || "";
-                const keys = item.keys || item.key_data || "";
+                const keysRaw = item.keys || item.key_data || "";
+                const keys = formatKeystrokesForDisplay(keysRaw);
                 const count = item.count || 1;
 
                 const row = document.createElement("tr");
                 row.className = "expandable-row";
+                row.dataset.keystrokeIndex = String(idx);
                 row.innerHTML =
                     `<td>${escapeHtml(time)}</td>` +
                     `<td>${escapeHtml(proc)}</td>` +
                     `<td title="${escapeHtml(win)}">${escapeHtml(truncate(win, 30))}</td>` +
                     `<td><code class="keystroke-text">${escapeHtml(truncate(keys, 80))}</code> <span style="color:var(--text-muted);font-size:0.75rem">(${count})</span></td>`;
 
-                let expanded = false;
-                if (keys.length > 80) {
+                if (keysRaw.length > 80) {
                     row.style.cursor = "pointer";
                     row.addEventListener("click", () => {
                         const next = row.nextElementSibling;
-                        if (expanded && next && next.classList.contains("expanded-content")) {
+                        if (next && next.classList.contains("expanded-content")) {
                             next.remove();
-                            expanded = false;
-                        } else if (!expanded) {
+                            state.expandedKeystrokeIndex = null;
+                        } else {
                             const expRow = document.createElement("tr");
                             expRow.classList.add("expanded-content");
                             const expTd = document.createElement("td");
@@ -658,15 +743,34 @@
                             expTd.textContent = keys;
                             expRow.appendChild(expTd);
                             row.after(expRow);
-                            expanded = true;
+                            state.expandedKeystrokeIndex = idx;
                         }
                     });
                 }
                 tbody.appendChild(row);
             });
 
+            if (state.expandedKeystrokeIndex != null && state.expandedKeystrokeIndex < items.length && (items[state.expandedKeystrokeIndex].keys || items[state.expandedKeystrokeIndex].key_data || "").length > 80) {
+                const row = tbody.querySelector(`tr[data-keystroke-index="${state.expandedKeystrokeIndex}"]`);
+                if (row) {
+                    const keys = formatKeystrokesForDisplay(items[state.expandedKeystrokeIndex].keys || items[state.expandedKeystrokeIndex].key_data || "");
+                    const expRow = document.createElement("tr");
+                    expRow.classList.add("expanded-content");
+                    const expTd = document.createElement("td");
+                    expTd.colSpan = 4;
+                    expTd.className = "expanded-content";
+                    expTd.style.whiteSpace = "pre-wrap";
+                    expTd.style.wordBreak = "break-all";
+                    expTd.style.fontFamily = "monospace";
+                    expTd.textContent = keys;
+                    expRow.appendChild(expTd);
+                    row.after(expRow);
+                }
+            }
+
             renderPagination(pag, page, totalPages, (p) => {
                 state.pages.keystrokes = p;
+                state.expandedKeystrokeIndex = null;
                 fetchKeystrokes();
             });
         } catch (_) {
@@ -685,9 +789,11 @@
         const tbody = $("#activities-body");
         const pag = $("#activities-pagination");
         const barsContainer = $("#app-usage-bars");
-        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-muted)">Loading...</td></tr>';
-        pag.innerHTML = "";
-        barsContainer.innerHTML = "";
+        if (!state.isBackgroundRefresh) {
+            tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-muted)">Loading...</td></tr>';
+            pag.innerHTML = "";
+            barsContainer.innerHTML = "";
+        }
         try {
             const page = state.pages.activities;
             const data = await api("GET",
@@ -711,6 +817,7 @@
                 grandTotal += dur;
             });
 
+            barsContainer.innerHTML = "";
             if (grandTotal > 0) {
                 const sorted = Object.entries(appTotals).sort((a, b) => b[1] - a[1]).slice(0, 10);
                 sorted.forEach(([proc, dur]) => {
@@ -759,10 +866,12 @@
         const pag = $("#events-pagination");
         const alertSection = $("#alert-events");
         const alertList = $("#alert-events-list");
-        tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted)">Loading...</td></tr>';
-        pag.innerHTML = "";
-        alertSection.classList.add("hidden");
-        alertList.innerHTML = "";
+        if (!state.isBackgroundRefresh) {
+            tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted)">Loading...</td></tr>';
+            pag.innerHTML = "";
+            alertSection.classList.add("hidden");
+            alertList.innerHTML = "";
+        }
 
         try {
             const page = state.pages.events;
@@ -782,6 +891,7 @@
                 const t = (ev.event_type || "").toLowerCase();
                 return t.includes("kill") || t.includes("crash") || t.includes("app_stop");
             });
+            alertList.innerHTML = "";
             if (alerts.length > 0) {
                 alertSection.classList.remove("hidden");
                 alerts.forEach((ev) => {
@@ -793,6 +903,8 @@
                         `<span class="alert-event-detail">${escapeHtml(ev.details || "")}</span>`;
                     alertList.appendChild(div);
                 });
+            } else {
+                alertSection.classList.add("hidden");
             }
 
             items.forEach((item) => {
