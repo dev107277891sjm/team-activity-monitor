@@ -56,6 +56,7 @@ def build():
         f"--name={name}",
         "--add-data", "server/static;server/static",
         "--add-data", "server/database.py;.",
+        "--icon=assets/icons/tam_admin.ico",
     ]
 
     for imp in hidden_imports:
