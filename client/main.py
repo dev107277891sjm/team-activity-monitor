@@ -1,10 +1,14 @@
 import logging
+import os
+import shutil
+import subprocess
 import sys
 import threading
 import time
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from pathlib import Path
 
 try:
     from client.activity_tracker import ActivityTracker
@@ -70,6 +74,72 @@ CONNECTION_CHECK_INTERVAL = 5
 PROCESS_POLL_INTERVAL = 1
 
 
+def _windows_set_run_key(app_name: str, command: str) -> bool:
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        import winreg  # type: ignore
+
+        run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, command)
+        return True
+    except Exception as exc:
+        logger.warning("Auto-start registration failed: %s", exc)
+        return False
+
+
+def _ensure_windows_install_and_autostart_user_app() -> None:
+    """
+    Install the user app EXE into a fixed system folder and register that installed EXE for auto-start.
+
+    Target:
+      C:\\ProgramData\\TAM\\UserApp\\tam_user.exe
+    """
+    if not sys.platform.startswith("win"):
+        return
+
+    exe_path = Path(sys.executable)
+    if not exe_path.name.lower().endswith(".exe"):
+        return  # running from python, not a built exe
+
+    if "--autostart" in sys.argv:
+        logger.info("Launched via Windows auto-start.")
+
+    install_dir = Path(r"C:\ProgramData\TAM\UserApp")
+    target_exe = install_dir / "tam_user.exe"
+
+    # Always ensure auto-start points to the installed path.
+    run_cmd = f"\"{str(target_exe)}\" --autostart"
+    _windows_set_run_key("TAM User", run_cmd)
+
+    # If we're already running from the installed location, nothing to do.
+    try:
+        if exe_path.resolve() == target_exe.resolve():
+            return
+    except Exception:
+        # Fall back to string comparison if resolve fails for any reason.
+        if str(exe_path).lower() == str(target_exe).lower():
+            return
+
+    # Avoid infinite relaunch loops.
+    if "--installed" in sys.argv:
+        return
+
+    try:
+        os.makedirs(install_dir, exist_ok=True)
+
+        tmp_exe = install_dir / "tam_user.new.exe"
+        shutil.copy2(str(exe_path), str(tmp_exe))
+        os.replace(str(tmp_exe), str(target_exe))
+
+        # Relaunch from the installed copy so future updates/auto-start are consistent.
+        subprocess.Popen([str(target_exe), "--installed"], close_fds=True)
+        sys.exit(0)
+    except Exception as exc:
+        logger.warning("Failed to install to %s: %s", target_exe, exc)
+
+
 class TAMClient:
     def __init__(self):
         self._shutdown = threading.Event()
@@ -78,6 +148,8 @@ class TAMClient:
         self._tz_str = "Asia/Seoul"
         self._tz = ZoneInfo(self._tz_str)
         self._capture_interval = DEFAULT_CAPTURE_INTERVAL
+        self._image_quality = 60
+        self._image_max_width = 1920
 
         self._buffer: LocalBuffer | None = None
         self._uploader: Uploader | None = None
@@ -95,6 +167,7 @@ class TAMClient:
         self._idle_threshold_rest_sec = 180
         self._idle_threshold_idle_sec = 420
         self._mouse_listener = None
+        self._pending_process_capture_at: float | None = None
 
     def _now(self) -> str:
         return datetime.now(self._tz).isoformat()
@@ -148,6 +221,10 @@ class TAMClient:
                 self._tz = ZoneInfo(self._tz_str)
             if settings.get("capture_interval"):
                 self._capture_interval = int(settings["capture_interval"])
+            if settings.get("image_quality"):
+                self._image_quality = int(settings["image_quality"])
+            if settings.get("image_max_width"):
+                self._image_max_width = int(settings["image_max_width"])
             rest = settings.get("idle_threshold_rest")
             idle = settings.get("idle_threshold_idle")
             if rest is not None:
@@ -168,8 +245,13 @@ class TAMClient:
         with self._capture_lock:
             try:
                 window_info = self._process_monitor.get_active_window_info()
-                browser_url = self._process_monitor.get_browser_url() or ""
-                screens = capture_all_screens()
+                if (not window_info.get("process_name")) and self._last_process_info:
+                    window_info = self._last_process_info
+                browser_title = self._process_monitor.get_browser_url() or ""
+                screens = capture_all_screens(
+                    quality=self._image_quality,
+                    max_width=self._image_max_width,
+                )
 
                 for monitor_idx, image_bytes, img_hash in screens:
                     metadata = {
@@ -180,7 +262,7 @@ class TAMClient:
                         "image_filename": f"{uuid.uuid4().hex}.jpg",
                         "trigger": trigger,
                         "active_process": window_info.get("process_name", ""),
-                        "active_url": browser_url,
+                        "active_url": browser_title,
                         "window_title": window_info.get("window_title", ""),
                     }
                     self._uploader.upload_screenshot(image_bytes, metadata)
@@ -190,6 +272,9 @@ class TAMClient:
     def _screen_capture_thread(self):
         logger.info("Screen capture thread started (interval=%ds)", self._capture_interval)
         wait_sec = self._capture_interval
+        min_capture_interval = self._capture_interval
+        hard_max_interval = self._capture_wait_max_sec
+        last_capture_ts = time.time()
         while not self._shutdown.is_set():
             self._shutdown.wait(wait_sec)
             if self._shutdown.is_set():
@@ -200,10 +285,18 @@ class TAMClient:
                     self._last_screen_hash = current_hash
                     keyboard_idle = self._activity_tracker.get_keyboard_idle_seconds() if self._activity_tracker else 0
                     process_unchanged = not self._process_monitor.has_process_changed(self._last_process_info)
+                    now_ts = time.time()
+                    elapsed_since_capture = now_ts - last_capture_ts
                     if keyboard_idle > self._capture_skip_keyboard_idle_sec and process_unchanged:
-                        wait_sec = min(wait_sec * 2, self._capture_wait_max_sec)
+                        if elapsed_since_capture >= min_capture_interval * 4:
+                            self._capture_and_upload(trigger="periodic")
+                            last_capture_ts = now_ts
+                            wait_sec = self._capture_interval
+                        else:
+                            wait_sec = min(wait_sec * 2, hard_max_interval)
                     else:
                         self._capture_and_upload(trigger="periodic")
+                        last_capture_ts = now_ts
                         wait_sec = self._capture_interval
             except Exception as exc:
                 logger.error("Screen capture thread error: %s", exc)
@@ -233,7 +326,18 @@ class TAMClient:
                     current_info["_started_at"] = now
                     self._last_process_info = current_info
 
-                    self._capture_and_upload(trigger="process_change")
+                    # Schedule a delayed capture 10 seconds after the process/window change.
+                    # If the process/window changes again before that, the pending capture
+                    # will be replaced and the short-lived window will not be captured.
+                    self._pending_process_capture_at = time.time() + 10.0
+                else:
+                    # No process/window change detected; if there is a pending capture and
+                    # the same process/window is still active after the delay, fire it now.
+                    if self._pending_process_capture_at is not None:
+                        now_ts = time.time()
+                        if now_ts >= self._pending_process_capture_at and self._last_process_info:
+                            self._capture_and_upload(trigger="process_change")
+                            self._pending_process_capture_at = None
             except Exception as exc:
                 logger.error("Process monitor error: %s", exc)
 
@@ -265,6 +369,8 @@ class TAMClient:
             try:
                 local_ip = get_local_ip()
                 window_info = self._process_monitor.get_active_window_info() if self._process_monitor else {}
+                if (not window_info.get("process_name")) and self._last_process_info:
+                    window_info = self._last_process_info
                 idle_sec = self._activity_tracker.get_idle_seconds() if self._activity_tracker else 0
                 if idle_sec >= self._idle_threshold_idle_sec:
                     status = "IDLE"
@@ -424,8 +530,8 @@ class TAMClient:
 
 
 def main():
-    import os
     os.makedirs(DATA_DIR, exist_ok=True)
+    _ensure_windows_install_and_autostart_user_app()
     client = TAMClient()
     client.run()
 

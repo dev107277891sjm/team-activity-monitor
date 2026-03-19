@@ -98,7 +98,7 @@ class TrayIcon:
             root.withdraw()
             messagebox.showinfo(
                 "Team Activity Monitor",
-                "TAM User App v1.0\n\nTeam Activity Monitor client.\nCaptures screen, keystrokes, and process activity.",
+                "TAM User App v1.0\n\nTeam Activity Monitor client.\nCaptures screen and process activity.",
             )
             root.destroy()
 

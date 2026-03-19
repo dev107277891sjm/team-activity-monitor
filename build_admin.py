@@ -52,10 +52,11 @@ def build():
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--onefile",
-        "--console",
+        "--noconsole",
         f"--name={name}",
         "--add-data", "server/static;server/static",
         "--add-data", "server/database.py;.",
+        "--icon=assets/icons/tam_admin.ico",
     ]
 
     for imp in hidden_imports:

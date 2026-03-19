@@ -10,6 +10,8 @@ import secrets
 import shutil
 import sys
 import uuid
+from pathlib import Path
+import subprocess
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -514,10 +516,82 @@ async def admin_disk_usage(_admin: bool = Depends(require_admin)):
 # ---------------------------------------------------------------------------
 app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
 
+def _windows_set_run_key(app_name: str, command: str) -> bool:
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        import winreg  # type: ignore
+
+        run_key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, command)
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_windows_autostart_admin_app() -> None:
+    """
+    Install the admin app EXE into a fixed system folder and register that installed EXE for auto-start.
+
+    Target:
+      C:\\ProgramData\\TAM\\AdminApp\\tam_admin.exe
+    """
+    if not sys.platform.startswith("win"):
+        return
+
+    exe_path = Path(sys.executable)
+    if not exe_path.name.lower().endswith(".exe"):
+        return
+
+    if "--autostart" in sys.argv:
+        # No console in the frozen build; still useful if redirected to a log.
+        try:
+            print("Launched via Windows auto-start.")
+        except Exception:
+            pass
+
+    install_dir = Path(r"C:\ProgramData\TAM\AdminApp")
+    target_exe = install_dir / "tam_admin.exe"
+
+    run_cmd = f"\"{str(target_exe)}\" --autostart"
+    _windows_set_run_key("TAM Admin", run_cmd)
+
+    try:
+        if exe_path.resolve() == target_exe.resolve():
+            return
+    except Exception:
+        if str(exe_path).lower() == str(target_exe).lower():
+            return
+
+    if "--installed" in sys.argv:
+        return
+
+    try:
+        os.makedirs(install_dir, exist_ok=True)
+
+        tmp_exe = install_dir / "tam_admin.new.exe"
+        shutil.copy2(str(exe_path), str(tmp_exe))
+        os.replace(str(tmp_exe), str(target_exe))
+
+        subprocess.Popen([str(target_exe), "--installed"], close_fds=True)
+        sys.exit(0)
+    except Exception:
+        # If install fails (permissions, etc.), still allow app to run from current location.
+        return
+
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8007, reload=False)
+    _ensure_windows_autostart_admin_app()
+    uvicorn.run(
+    app,
+    host="0.0.0.0",
+    port=8007,
+    reload=False,
+    log_config=None,      # <— key change: avoid DefaultFormatter
+    access_log=False,     # optional: reduces noise
+)

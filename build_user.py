@@ -71,6 +71,7 @@ def build():
         "--onefile",
         "--noconsole",
         f"--name={name}",
+        "--icon=assets/icons/tam_user.ico",
     ]
 
     for mod in client_modules:

@@ -34,6 +34,6 @@ def compute_screen_hash() -> str:
         for monitor in sct.monitors[1:]:
             raw = sct.grab(monitor)
             img = Image.frombytes("RGB", (raw.width, raw.height), raw.rgb)
-            gray = img.convert("L").resize((160, 90), Image.NEAREST)
+            gray = img.convert("L").resize((96, 54), Image.NEAREST)
             combined.update(gray.tobytes())
     return combined.hexdigest()
