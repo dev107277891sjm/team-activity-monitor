@@ -172,20 +172,30 @@
         $("#current-date").textContent = formatDate(state.selectedDate);
     }
 
+    function resetPaginationForNewDate() {
+        state.pages.screenshots = 1;
+        state.pages.keystrokes = 1;
+        state.pages.activities = 1;
+        state.pages.events = 1;
+    }
+
     function initDateNav() {
         $("#prev-day-btn").addEventListener("click", () => {
             state.selectedDate = shiftDate(state.selectedDate, -1);
             updateDateDisplay();
+            resetPaginationForNewDate();
             refreshAll();
         });
         $("#next-day-btn").addEventListener("click", () => {
             state.selectedDate = shiftDate(state.selectedDate, 1);
             updateDateDisplay();
+            resetPaginationForNewDate();
             refreshAll();
         });
         $("#today-btn").addEventListener("click", () => {
             state.selectedDate = todayStr();
             updateDateDisplay();
+            resetPaginationForNewDate();
             refreshAll();
         });
     }
@@ -248,13 +258,12 @@
         state.isBackgroundRefresh = true;
 
         try {
+            await fetchUsers();
             await Promise.all([
                 fetchStats(),
-                fetchUsers(),
                 fetchDiskUsage(),
+                fetchAllTimelines(),
             ]);
-            await fetchAllTimelines();
-
             if (state.selectedUserId) {
                 await refreshDetailTab();
             }
@@ -650,7 +659,7 @@
             }
 
             items.forEach((item, idx) => {
-                const imgUrl = item.image_path || item.url || "";
+                const thumbUrl = item.thumb_url || item.image_path || item.url || "";
                 const capturedAt = item.captured_at || "";
                 const time = capturedAt.includes("T") ? capturedAt.split("T")[1].substring(0, 8) : (item.time || "");
                 const proc = item.active_process || item.process || "";
@@ -660,7 +669,7 @@
                 const card = document.createElement("div");
                 card.className = "screenshot-card";
                 card.innerHTML =
-                    `<img src="${escapeHtml(imgUrl)}" alt="Screenshot" loading="lazy" onerror="this.style.display='none'">` +
+                    `<img src="${escapeHtml(thumbUrl)}" alt="Screenshot" loading="lazy" decoding="async" onerror="this.style.display='none'">` +
                     `<div class="screenshot-meta">` +
                     `<span class="time">${escapeHtml(time)}</span>` +
                     `<span class="process">${escapeHtml(proc)}${monitor ? " &middot; " + escapeHtml(monitor) : ""}</span>` +

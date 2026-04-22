@@ -28,7 +28,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 try:
@@ -36,7 +36,7 @@ try:
         DATA_DIR, add_activities, add_events_batch, add_keystrokes,
         add_screenshot, cleanup_old_data, create_user, get_activities,
         get_all_settings, get_all_users, get_disk_usage, get_events,
-        get_keystrokes, get_keystrokes_grouped, get_screenshots,
+        count_screenshots_for_date, get_keystrokes, get_keystrokes_grouped, get_screenshot_by_id, get_screenshots,
         get_setting, get_timeline,
         get_user, get_user_by_ip, init_db, set_users_offline,
         update_setting, update_user_heartbeat, update_user_name,
@@ -46,7 +46,7 @@ except ImportError:
         DATA_DIR, add_activities, add_events_batch, add_keystrokes,
         add_screenshot, cleanup_old_data, create_user, get_activities,
         get_all_settings, get_all_users, get_disk_usage, get_events,
-        get_keystrokes, get_keystrokes_grouped, get_screenshots,
+        count_screenshots_for_date, get_keystrokes, get_keystrokes_grouped, get_screenshot_by_id, get_screenshots,
         get_setting, get_timeline,
         get_user, get_user_by_ip, init_db, set_users_offline,
         update_setting, update_user_heartbeat, update_user_name,
@@ -193,6 +193,26 @@ os.makedirs(_STATIC_DIR, exist_ok=True)
 
 _IMAGES_DIR = os.path.join(DATA_DIR, "images")
 os.makedirs(_IMAGES_DIR, exist_ok=True)
+_THUMB_CACHE_DIR = os.path.join(DATA_DIR, ".thumb_cache")
+_THUMB_MAX_WIDTH = 360
+
+
+def _safe_disk_path_for_image_url(image_path: str) -> Optional[str]:
+    """Resolve /images/... URL from DB to an absolute file path under DATA_DIR/images."""
+    if not image_path or not isinstance(image_path, str) or not image_path.startswith("/images/"):
+        return None
+    rel = image_path[len("/images/") :].lstrip("/\\")
+    if ".." in rel.replace("\\", "/"):
+        return None
+    full = os.path.abspath(os.path.join(_IMAGES_DIR, rel))
+    base = os.path.abspath(_IMAGES_DIR)
+    try:
+        if os.path.commonpath([full, base]) != base:
+            return None
+    except ValueError:
+        return None
+    return full if os.path.isfile(full) else None
+
 
 app.mount("/images", StaticFiles(directory=_IMAGES_DIR), name="images")
 
@@ -417,6 +437,10 @@ async def admin_screenshots(
     _admin: bool = Depends(require_admin),
 ):
     items, total = get_screenshots(user_id, date, start_time, end_time, page, limit)
+    for it in items:
+        sid = it.get("id")
+        if sid:
+            it["thumb_url"] = f"/api/admin/screenshot-thumb/{sid}"
     return {"items": items, "total": total, "page": page, "limit": limit}
 
 
@@ -471,8 +495,7 @@ async def admin_stats(_admin: bool = Depends(require_admin)):
     idle = sum(1 for u in users if u["status"] in ("IDLE", "REST"))
     offline = sum(1 for u in users if u["status"] == "OFFLINE")
 
-    shots_today, _ = get_screenshots(date=today, page=1, limit=1)
-    _, total_today = get_screenshots(date=today, page=1, limit=1)
+    total_today = count_screenshots_for_date(today)
 
     disk = get_disk_usage()
     return {
@@ -509,6 +532,40 @@ async def admin_update_settings(request: Request, _admin: bool = Depends(require
 @app.get("/api/admin/disk-usage")
 async def admin_disk_usage(_admin: bool = Depends(require_admin)):
     return get_disk_usage()
+
+
+@app.get("/api/admin/screenshot-thumb/{screenshot_id}")
+async def admin_screenshot_thumb(
+    screenshot_id: str,
+    _admin: bool = Depends(require_admin),
+):
+    """JPEG thumbnail for grid view; cached under DATA_DIR/.thumb_cache by id + source mtime."""
+    row = get_screenshot_by_id(screenshot_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    disk = _safe_disk_path_for_image_url(row.get("image_path") or "")
+    if not disk:
+        raise HTTPException(status_code=404, detail="Image file not found")
+
+    os.makedirs(_THUMB_CACHE_DIR, exist_ok=True)
+    mtime = int(os.path.getmtime(disk))
+    cache_path = os.path.join(_THUMB_CACHE_DIR, f"{screenshot_id}_{mtime}.jpg")
+
+    if not os.path.isfile(cache_path):
+        try:
+            from PIL import Image  # type: ignore
+
+            with Image.open(disk) as im:
+                im = im.convert("RGB")
+                w, h = im.size
+                if w > _THUMB_MAX_WIDTH:
+                    nh = max(1, int(h * (_THUMB_MAX_WIDTH / w)))
+                    im = im.resize((_THUMB_MAX_WIDTH, nh), Image.Resampling.LANCZOS)
+                im.save(cache_path, "JPEG", quality=72, optimize=True)
+        except Exception:
+            return FileResponse(disk, media_type="image/jpeg")
+
+    return FileResponse(cache_path, media_type="image/jpeg")
 
 
 # ---------------------------------------------------------------------------

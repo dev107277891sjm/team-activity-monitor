@@ -133,11 +133,20 @@ _DEFAULT_SETTINGS: dict[str, str] = {
 }
 
 
+_TIMELINE_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_screenshots_user_captured ON screenshots(user_id, captured_at);
+CREATE INDEX IF NOT EXISTS idx_activities_user_started ON activities(user_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_events_user_ts ON events(user_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_keystrokes_user_ts ON keystrokes(user_id, timestamp);
+"""
+
+
 def init_db() -> None:
     _ensure_dirs()
     conn = get_db()
     try:
         conn.executescript(_TABLES_SQL)
+        conn.executescript(_TIMELINE_INDEX_SQL)
         for key, value in _DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
@@ -315,6 +324,28 @@ def add_screenshot(
     finally:
         conn.close()
     return sid
+
+
+def get_screenshot_by_id(screenshot_id: str) -> Optional[dict]:
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM screenshots WHERE id=?", (screenshot_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def count_screenshots_for_date(date: str) -> int:
+    """COUNT(*) for screenshots on a calendar day (same filter as get_screenshots date=)."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM screenshots WHERE captured_at LIKE ?",
+            (f"{date}%",),
+        ).fetchone()
+        return int(row["cnt"] or 0) if row else 0
+    finally:
+        conn.close()
 
 
 def get_screenshots(
@@ -624,24 +655,58 @@ def get_events(
 # Timeline builder
 # ---------------------------------------------------------------------------
 
+_MAX_TIMELINE_SCREENSHOT_POINTS = 1600
+
+
+def _fetch_timeline_screenshot_rows(conn: sqlite3.Connection, user_id: str, date_prefix: str) -> list[sqlite3.Row]:
+    """Return screenshot rows for timeline; subsample when count is huge (same-day captures)."""
+    cnt_row = conn.execute(
+        "SELECT COUNT(*) AS c FROM screenshots WHERE user_id=? AND captured_at LIKE ?",
+        (user_id, date_prefix),
+    ).fetchone()
+    cnt = int(cnt_row["c"] or 0) if cnt_row else 0
+    if cnt <= _MAX_TIMELINE_SCREENSHOT_POINTS:
+        return conn.execute(
+            "SELECT captured_at, active_process, trigger FROM screenshots "
+            "WHERE user_id=? AND captured_at LIKE ? ORDER BY captured_at ASC",
+            (user_id, date_prefix),
+        ).fetchall()
+    # ceil(cnt / max) so step >= 2 when cnt > max (avoid step=1 which would select every row)
+    step = (cnt + _MAX_TIMELINE_SCREENSHOT_POINTS - 1) // _MAX_TIMELINE_SCREENSHOT_POINTS
+    return conn.execute(
+        """
+        WITH ordered AS (
+            SELECT captured_at, active_process, trigger,
+                   ROW_NUMBER() OVER (ORDER BY captured_at ASC) AS rn
+            FROM screenshots
+            WHERE user_id=? AND captured_at LIKE ?
+        ),
+        mx AS (SELECT MAX(rn) AS m FROM ordered)
+        SELECT ordered.captured_at, ordered.active_process, ordered.trigger
+        FROM ordered, mx
+        WHERE ordered.rn = 1 OR ordered.rn = mx.m OR ((ordered.rn - 1) % ? = 0)
+        ORDER BY ordered.captured_at ASC
+        """,
+        (user_id, date_prefix, step),
+    ).fetchall()
+
+
 def get_timeline(user_id: str, date: str) -> dict:
     """Build timeline segments and events for a user on a given date from all data sources."""
     date_prefix = f"{date}%"
     day_start_str = f"{date}T00:00:00"
     day_end_str = f"{date}T23:59:59"
 
-    offline_threshold_sec = int(get_setting("offline_threshold") or _DEFAULT_SETTINGS.get("offline_threshold", "60"))
+    settings = get_all_settings()
+    offline_threshold_sec = int(settings.get("offline_threshold") or _DEFAULT_SETTINGS.get("offline_threshold", "60"))
+    idle_threshold_rest_sec = int(settings.get("idle_threshold_rest") or _DEFAULT_SETTINGS.get("idle_threshold_rest", "180"))
 
     conn = get_db()
     keystroke_count = 0
     try:
         timestamps: list[tuple[str, str, str]] = []
 
-        shot_rows = conn.execute(
-            "SELECT captured_at, active_process, trigger FROM screenshots "
-            "WHERE user_id=? AND captured_at LIKE ? ORDER BY captured_at ASC",
-            (user_id, date_prefix),
-        ).fetchall()
+        shot_rows = _fetch_timeline_screenshot_rows(conn, user_id, date_prefix)
         for r in shot_rows:
             timestamps.append((r["captured_at"], r["active_process"] or "", "ONLINE"))
 
@@ -691,9 +756,11 @@ def get_timeline(user_id: str, date: str) -> dict:
             status = info.get("status", "ONLINE")
             timestamps.append((r["timestamp"], proc, status))
 
+        # Omit heartbeats from marker list (UI skips them; cuts payload size on busy days).
         event_rows = conn.execute(
             "SELECT event_type, timestamp, details FROM events "
-            "WHERE user_id=? AND timestamp LIKE ? ORDER BY timestamp ASC",
+            "WHERE user_id=? AND timestamp LIKE ? AND LOWER(event_type) NOT IN ('heartbeat') "
+            "ORDER BY timestamp ASC",
             (user_id, date_prefix),
         ).fetchall()
         events_out = [
@@ -768,8 +835,7 @@ def get_timeline(user_id: str, date: str) -> dict:
                         "process": "",
                     })
                 else:
-                    idle_rest_sec = int(get_setting("idle_threshold_rest") or _DEFAULT_SETTINGS.get("idle_threshold_rest", "180"))
-                    gap_status = "IDLE" if gap_sec >= idle_rest_sec else "REST"
+                    gap_status = "IDLE" if gap_sec >= idle_threshold_rest_sec else "REST"
                     final_segments.append({
                         "start": _ts_to_str(prev_end),
                         "end": _ts_to_str(seg_start),
