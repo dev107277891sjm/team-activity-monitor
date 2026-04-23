@@ -40,6 +40,7 @@ try:
         count_screenshots_for_date, get_keystrokes, get_keystrokes_grouped, get_screenshot_by_id, get_screenshots,
         get_setting, get_timeline, get_timelines_for_all_users,
         get_user, get_user_by_ip, init_db, set_users_offline,
+        delete_user_and_data, set_user_admin_hidden,
         update_setting, update_user_heartbeat, update_user_name,
     )
 except ImportError:
@@ -50,6 +51,7 @@ except ImportError:
         count_screenshots_for_date, get_keystrokes, get_keystrokes_grouped, get_screenshot_by_id, get_screenshots,
         get_setting, get_timeline, get_timelines_for_all_users,
         get_user, get_user_by_ip, init_db, set_users_offline,
+        delete_user_and_data, set_user_admin_hidden,
         update_setting, update_user_heartbeat, update_user_name,
     )
 
@@ -412,8 +414,14 @@ async def admin_logout(tam_session: Optional[str] = Cookie(None)):
 
 
 @app.get("/api/admin/users")
-async def admin_users(_admin: bool = Depends(require_admin)):
-    return get_all_users()
+async def admin_users(
+    include_hidden: bool = Query(
+        False,
+        description="When true, list all accounts including admin-hidden (for user management).",
+    ),
+    _admin: bool = Depends(require_admin),
+):
+    return get_all_users(include_hidden=include_hidden)
 
 
 @app.get("/api/admin/timelines")
@@ -499,9 +507,31 @@ async def admin_events(
     return {"items": items, "total": total, "page": page, "limit": limit}
 
 
+@app.patch("/api/admin/users/{user_id}")
+async def admin_patch_user(
+    user_id: str,
+    request: Request,
+    _admin: bool = Depends(require_admin),
+):
+    body = await request.json()
+    if "hidden" not in body:
+        raise HTTPException(status_code=400, detail="Expected JSON body with 'hidden' boolean.")
+    if not set_user_admin_hidden(user_id, bool(body["hidden"])):
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True, "user_id": user_id, "hidden": bool(body["hidden"])}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, _admin: bool = Depends(require_admin)):
+    if not get_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    deleted = delete_user_and_data(user_id)
+    return {"ok": True, "deleted": deleted}
+
+
 @app.get("/api/admin/stats")
 async def admin_stats(_admin: bool = Depends(require_admin)):
-    users = get_all_users()
+    users = get_all_users(include_hidden=False)
     today = datetime.now(_KST).strftime("%Y-%m-%d")
 
     online = sum(1 for u in users if u["status"] == "ONLINE")

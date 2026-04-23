@@ -142,11 +142,20 @@ CREATE INDEX IF NOT EXISTS idx_keystrokes_user_ts ON keystrokes(user_id, timesta
 """
 
 
+def _ensure_users_admin_columns(conn: sqlite3.Connection) -> None:
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "admin_hidden" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN admin_hidden INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 def init_db() -> None:
     _ensure_dirs()
     conn = get_db()
     try:
         conn.executescript(_TABLES_SQL)
+        _ensure_users_admin_columns(conn)
         conn.executescript(_TIMELINE_INDEX_SQL)
         for key, value in _DEFAULT_SETTINGS.items():
             conn.execute(
@@ -203,8 +212,8 @@ def create_user(local_ip: str, display_name: str) -> dict[str, str]:
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO users (user_id, local_ip, display_name, registered_at, last_seen, status) "
-            "VALUES (?, ?, ?, ?, ?, 'ONLINE')",
+            "INSERT INTO users (user_id, local_ip, display_name, registered_at, last_seen, status, admin_hidden) "
+            "VALUES (?, ?, ?, ?, ?, 'ONLINE', 0)",
             (user_id, local_ip, display_name, now, now),
         )
         conn.commit()
@@ -231,13 +240,92 @@ def get_user_by_ip(local_ip: str) -> Optional[dict]:
         conn.close()
 
 
-def get_all_users() -> list[dict]:
+def get_all_users(include_hidden: bool = True) -> list[dict]:
+    """Return users. When include_hidden is False, omit users marked admin_hidden (dashboard & stats)."""
     conn = get_db()
     try:
-        rows = conn.execute("SELECT * FROM users ORDER BY display_name").fetchall()
+        if include_hidden:
+            rows = conn.execute("SELECT * FROM users ORDER BY display_name").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM users WHERE COALESCE(admin_hidden, 0) = 0 ORDER BY display_name"
+            ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def set_user_admin_hidden(user_id: str, hidden: bool) -> bool:
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE users SET admin_hidden=? WHERE user_id=?",
+            (1 if hidden else 0, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def _abs_screenshot_disk_path(image_path: str) -> Optional[str]:
+    """Resolve DB image_path (/images/...) to absolute file under DATA_DIR/images."""
+    images_root = os.path.join(DATA_DIR, "images")
+    if not image_path or not isinstance(image_path, str):
+        return None
+    if image_path.startswith("/images/"):
+        rel = image_path[len("/images/") :].lstrip("/\\")
+        if ".." in rel.replace("\\", "/"):
+            return None
+        full = os.path.abspath(os.path.join(images_root, rel))
+        base = os.path.abspath(images_root)
+        try:
+            if os.path.commonpath([full, base]) != base:
+                return None
+        except ValueError:
+            return None
+        return full if os.path.isfile(full) else None
+    if os.path.isabs(image_path) and os.path.isfile(image_path):
+        return image_path
+    return None
+
+
+def delete_user_and_data(user_id: str) -> dict[str, int]:
+    """Remove user row and all related data; delete screenshot files and thumb cache entries."""
+    counts: dict[str, int] = {}
+    conn = get_db()
+    thumb_dir = os.path.join(DATA_DIR, ".thumb_cache")
+    try:
+        shot_rows = conn.execute(
+            "SELECT id, image_path FROM screenshots WHERE user_id=?", (user_id,)
+        ).fetchall()
+        for r in shot_rows:
+            sid = r["id"]
+            path = _abs_screenshot_disk_path(r["image_path"] or "")
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            if sid and os.path.isdir(thumb_dir):
+                for fn in glob.glob(os.path.join(thumb_dir, f"{sid}_*.jpg")):
+                    try:
+                        os.remove(fn)
+                    except OSError:
+                        pass
+
+        for table in ("events", "keystrokes", "activities", "screenshots"):
+            cur = conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
+            counts[table] = cur.rowcount or 0
+
+        cur = conn.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        counts["users"] = cur.rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+
+    invalidate_disk_usage_cache()
+    return counts
 
 
 def update_user_name(user_id: str, display_name: str) -> bool:
@@ -336,14 +424,25 @@ def get_screenshot_by_id(screenshot_id: str) -> Optional[dict]:
         conn.close()
 
 
-def count_screenshots_for_date(date: str) -> int:
-    """COUNT(*) for screenshots on a calendar day (same filter as get_screenshots date=)."""
+def count_screenshots_for_date(date: str, exclude_hidden_users: bool = True) -> int:
+    """COUNT(*) for screenshots on a calendar day; optionally exclude admin-hidden users."""
     conn = get_db()
+    prefix = f"{date}%"
     try:
-        row = conn.execute(
-            "SELECT COUNT(*) AS cnt FROM screenshots WHERE captured_at LIKE ?",
-            (f"{date}%",),
-        ).fetchone()
+        if exclude_hidden_users:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt FROM screenshots s
+                INNER JOIN users u ON u.user_id = s.user_id
+                WHERE s.captured_at LIKE ? AND COALESCE(u.admin_hidden, 0) = 0
+                """,
+                (prefix,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM screenshots WHERE captured_at LIKE ?",
+                (prefix,),
+            ).fetchone()
         return int(row["cnt"] or 0) if row else 0
     finally:
         conn.close()
@@ -893,7 +992,7 @@ def get_timelines_for_all_users(date: str) -> dict[str, dict]:
     """Build timelines for every registered user for one date (single settings load)."""
     settings = get_all_settings()
     timelines: dict[str, dict] = {}
-    for u in get_all_users():
+    for u in get_all_users(include_hidden=False):
         uid = u.get("user_id")
         if not uid:
             continue

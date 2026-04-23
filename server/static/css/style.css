@@ -975,6 +975,70 @@ label.toggle-label {
     margin-bottom: 16px;
     color: var(--text-primary);
 }
+.settings-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: -8px 0 16px;
+    line-height: 1.45;
+}
+
+.user-manage-modal {
+    width: 820px;
+    max-width: 96vw;
+}
+.user-manage-intro {
+    padding: 16px 24px 0;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+.user-manage-intro p { margin: 0; }
+.user-manage-table {
+    margin: 12px 24px 24px;
+    width: calc(100% - 48px);
+    font-size: 0.8rem;
+}
+.user-manage-table td { vertical-align: middle; }
+.user-manage-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.user-manage-footer {
+    justify-content: flex-start;
+}
+.btn.btn-danger {
+    background: rgba(183, 28, 28, 0.25);
+    color: #ffcdd2;
+    border: 1px solid rgba(229, 57, 53, 0.5);
+}
+.btn.btn-danger:hover {
+    background: rgba(229, 57, 53, 0.45);
+    color: #fff;
+}
+.btn-sm {
+    font-size: 0.72rem;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm, 4px);
+}
+.badge-hidden {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: rgba(158, 158, 158, 0.25);
+    color: var(--text-muted);
+}
+.badge-visible {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    background: rgba(76, 175, 80, 0.2);
+    color: #a5d6a7;
+}
 
 /* ============================================================
    LIGHTBOX

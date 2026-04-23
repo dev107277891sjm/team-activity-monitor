@@ -118,6 +118,7 @@
     // ── Screen Management ──────────────────────────────────
     function showLogin() {
         stopAutoRefresh();
+        $("#user-manage-modal").classList.add("hidden");
         $("#login-screen").classList.add("active");
         $("#dashboard-screen").classList.remove("active");
         $("#login-password").value = "";
@@ -253,6 +254,21 @@
         });
     }
 
+    function clearDetailIfSelectedUserMissing() {
+        if (!state.selectedUserId) return;
+        const still = state.users.some((u) => (u.user_id || u.id) === state.selectedUserId);
+        if (!still) {
+            $("#detail-panel").classList.add("hidden");
+            state.selectedUserId = null;
+            state.selectedUserIp = null;
+            state.selectedUserName = null;
+            state.selectedTimeRange = null;
+            state.expandedKeystrokeIndex = null;
+            $$(".timeline-row").forEach((r) => r.classList.remove("selected"));
+            $$(".timeline-summary-row").forEach((r) => r.classList.remove("selected"));
+        }
+    }
+
     async function refreshAll(options) {
         const opts = options || {};
         const skipDiskUsage = opts.skipDiskUsage === true;
@@ -267,6 +283,7 @@
                 parallel.push(fetchDiskUsage({ forceRefresh: forceDiskRefresh }));
             }
             await Promise.all(parallel);
+            clearDetailIfSelectedUserMissing();
             if (state.selectedUserId) {
                 await refreshDetailTab();
             }
@@ -1267,6 +1284,115 @@
         setTimeout(() => msg.classList.add("hidden"), 4000);
     }
 
+    // ── User accounts (hide / remove) ─────────────────────
+    function _userManageMsg(text, isError) {
+        const el = $("#user-manage-msg");
+        if (!el) return;
+        el.textContent = text || "";
+        el.classList.remove("hidden", "success", "error");
+        if (!text) return;
+        el.classList.add(isError ? "error" : "success");
+    }
+
+    async function loadUserManageTable() {
+        const tbody = $("#user-manage-body");
+        if (!tbody) return;
+        tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-muted)">Loading...</td></tr>';
+        _userManageMsg("", false);
+        try {
+            const data = await api("GET", "/api/admin/users?include_hidden=true");
+            const list = Array.isArray(data) ? data : (data.users || []);
+            tbody.innerHTML = "";
+            if (list.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-muted)">No registered users.</td></tr>';
+                return;
+            }
+            list.forEach((u) => {
+                const uid = u.user_id || u.id;
+                const hidden = u.admin_hidden === 1 || u.admin_hidden === true;
+                const status = (u.status || "offline").toLowerCase();
+                const tr = document.createElement("tr");
+                tr.innerHTML =
+                    `<td>${escapeHtml(u.display_name || u.name || uid)}</td>` +
+                    `<td>${escapeHtml(u.local_ip || u.ip || "")}</td>` +
+                    `<td><span class="status-badge ${status}">${escapeHtml(status)}</span></td>` +
+                    `<td>${escapeHtml(u.last_seen || u.last_heartbeat || "--")}</td>` +
+                    `<td>${hidden ? '<span class="badge-hidden">Hidden</span>' : '<span class="badge-visible">Visible</span>'}</td>` +
+                    `<td class="user-manage-actions"></td>`;
+                const actions = tr.querySelector(".user-manage-actions");
+                const hideBtn = document.createElement("button");
+                hideBtn.className = "btn btn-secondary btn-sm";
+                hideBtn.type = "button";
+                hideBtn.textContent = hidden ? "Show" : "Hide";
+                hideBtn.addEventListener("click", () => setUserHiddenFromManage(uid, !hidden));
+                actions.appendChild(hideBtn);
+                const delBtn = document.createElement("button");
+                delBtn.className = "btn btn-danger btn-sm";
+                delBtn.type = "button";
+                delBtn.textContent = "Remove";
+                delBtn.addEventListener("click", () => deleteUserFromManage(uid, u.display_name || u.name || uid));
+                actions.appendChild(delBtn);
+                tbody.appendChild(tr);
+            });
+        } catch (err) {
+            tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-muted)">Failed to load users.</td></tr>';
+            _userManageMsg(err.message || "Failed to load.", true);
+        }
+    }
+
+    async function setUserHiddenFromManage(userId, hidden) {
+        _userManageMsg("", false);
+        try {
+            await api("PATCH", "/api/admin/users/" + encodeURIComponent(userId), { hidden: hidden });
+            _userManageMsg(hidden ? "User hidden from statistics and main view." : "User is visible again.", false);
+            await refreshAll({ skipDiskUsage: true });
+            await loadUserManageTable();
+        } catch (err) {
+            _userManageMsg(err.message || "Update failed.", true);
+        }
+    }
+
+    async function deleteUserFromManage(userId, displayLabel) {
+        const ok = window.confirm(
+            "Permanently remove user \"" + displayLabel + "\" and all of their screenshots, logs, and events? This cannot be undone."
+        );
+        if (!ok) return;
+        _userManageMsg("", false);
+        try {
+            await api("DELETE", "/api/admin/users/" + encodeURIComponent(userId));
+            _userManageMsg("User and related data were removed.", false);
+            await refreshAll({ skipDiskUsage: true });
+            await loadUserManageTable();
+        } catch (err) {
+            _userManageMsg(err.message || "Remove failed.", true);
+        }
+    }
+
+    function openUserManage() {
+        $("#user-manage-modal").classList.remove("hidden");
+        loadUserManageTable();
+    }
+
+    function closeUserManage() {
+        $("#user-manage-modal").classList.add("hidden");
+        _userManageMsg("", false);
+    }
+
+    function initUserManage() {
+        const openBtn = $("#users-manage-btn");
+        if (openBtn) openBtn.addEventListener("click", openUserManage);
+        const closeBtn = $("#user-manage-close-btn");
+        if (closeBtn) closeBtn.addEventListener("click", closeUserManage);
+        const modal = $("#user-manage-modal");
+        if (modal) {
+            modal.addEventListener("click", (e) => {
+                if (e.target === modal) closeUserManage();
+            });
+        }
+        const refBtn = $("#user-manage-refresh-btn");
+        if (refBtn) refBtn.addEventListener("click", () => loadUserManageTable());
+    }
+
     function initSettings() {
         $("#settings-btn").addEventListener("click", openSettings);
         $("#settings-close-btn").addEventListener("click", closeSettings);
@@ -1299,7 +1425,9 @@
     function initKeyboard() {
         document.addEventListener("keydown", (e) => {
             if (e.key === "Escape") {
-                if (!$("#settings-modal").classList.contains("hidden")) {
+                if (!$("#user-manage-modal").classList.contains("hidden")) {
+                    closeUserManage();
+                } else if (!$("#settings-modal").classList.contains("hidden")) {
                     closeSettings();
                 }
             }
@@ -1326,6 +1454,7 @@
         initDetailTabs();
         initDetailClose();
         initLightbox();
+        initUserManage();
         initSettings();
         initKeyboard();
         checkSession();
