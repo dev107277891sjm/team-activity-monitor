@@ -184,19 +184,19 @@
             state.selectedDate = shiftDate(state.selectedDate, -1);
             updateDateDisplay();
             resetPaginationForNewDate();
-            refreshAll();
+            refreshAll({ skipDiskUsage: true });
         });
         $("#next-day-btn").addEventListener("click", () => {
             state.selectedDate = shiftDate(state.selectedDate, 1);
             updateDateDisplay();
             resetPaginationForNewDate();
-            refreshAll();
+            refreshAll({ skipDiskUsage: true });
         });
         $("#today-btn").addEventListener("click", () => {
             state.selectedDate = todayStr();
             updateDateDisplay();
             resetPaginationForNewDate();
-            refreshAll();
+            refreshAll({ skipDiskUsage: true });
         });
     }
 
@@ -230,7 +230,7 @@
     function initRefreshBtn() {
         $("#refresh-btn").addEventListener("click", () => {
             state.refreshCountdown = 30;
-            refreshAll();
+            refreshAll({ forceDiskRefresh: true });
         });
     }
 
@@ -253,17 +253,20 @@
         });
     }
 
-    async function refreshAll() {
+    async function refreshAll(options) {
+        const opts = options || {};
+        const skipDiskUsage = opts.skipDiskUsage === true;
+        const forceDiskRefresh = opts.forceDiskRefresh === true;
         const scrollPos = _saveScrollPositions();
         state.isBackgroundRefresh = true;
 
         try {
             await fetchUsers();
-            await Promise.all([
-                fetchStats(),
-                fetchDiskUsage(),
-                fetchAllTimelines(),
-            ]);
+            const parallel = [fetchStats(), fetchAllTimelines()];
+            if (!skipDiskUsage) {
+                parallel.push(fetchDiskUsage({ forceRefresh: forceDiskRefresh }));
+            }
+            await Promise.all(parallel);
             if (state.selectedUserId) {
                 await refreshDetailTab();
             }
@@ -285,9 +288,12 @@
         } catch (_) {}
     }
 
-    async function fetchDiskUsage() {
+    async function fetchDiskUsage(opts) {
+        const o = opts || {};
+        const force = o.forceRefresh === true;
+        const path = "/api/admin/disk-usage" + (force ? "?refresh=true" : "");
         try {
-            const data = await api("GET", "/api/admin/disk-usage");
+            const data = await api("GET", path);
             const gb = data.total_gb ?? 0;
             $("#stat-disk").textContent = gb.toFixed(2) + " GB";
         } catch (_) {
@@ -308,23 +314,26 @@
     // ── Timelines ──────────────────────────────────────────
     async function fetchAllTimelines() {
         const container = $("#timeline-container");
-        const emptyEl = $("#timeline-empty");
 
         if (state.users.length === 0) {
             container.innerHTML = '<div class="timeline-empty">No user data available for this date.</div>';
             return;
         }
 
-        const promises = state.users.map(async (u) => {
-            try {
+        const encDate = encodeURIComponent(state.selectedDate);
+        try {
+            const data = await api("GET", `/api/admin/timelines?date=${encDate}`);
+            const timelines = data.timelines || {};
+            state.timelines = {};
+            state.users.forEach((u) => {
                 const uid = u.user_id || u.id;
-                const data = await api("GET", `/api/admin/timeline/${uid}?date=${state.selectedDate}`);
-                state.timelines[uid] = data;
-            } catch (_) {
+                state.timelines[uid] = timelines[uid] != null ? timelines[uid] : null;
+            });
+        } catch (_) {
+            state.users.forEach((u) => {
                 state.timelines[u.user_id || u.id] = null;
-            }
-        });
-        await Promise.all(promises);
+            });
+        }
 
         renderTimelines();
     }

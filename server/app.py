@@ -25,6 +25,7 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -37,7 +38,7 @@ try:
         add_screenshot, cleanup_old_data, create_user, get_activities,
         get_all_settings, get_all_users, get_disk_usage, get_events,
         count_screenshots_for_date, get_keystrokes, get_keystrokes_grouped, get_screenshot_by_id, get_screenshots,
-        get_setting, get_timeline,
+        get_setting, get_timeline, get_timelines_for_all_users,
         get_user, get_user_by_ip, init_db, set_users_offline,
         update_setting, update_user_heartbeat, update_user_name,
     )
@@ -47,7 +48,7 @@ except ImportError:
         add_screenshot, cleanup_old_data, create_user, get_activities,
         get_all_settings, get_all_users, get_disk_usage, get_events,
         count_screenshots_for_date, get_keystrokes, get_keystrokes_grouped, get_screenshot_by_id, get_screenshots,
-        get_setting, get_timeline,
+        get_setting, get_timeline, get_timelines_for_all_users,
         get_user, get_user_by_ip, init_db, set_users_offline,
         update_setting, update_user_heartbeat, update_user_name,
     )
@@ -415,6 +416,18 @@ async def admin_users(_admin: bool = Depends(require_admin)):
     return get_all_users()
 
 
+@app.get("/api/admin/timelines")
+async def admin_timelines_batch(
+    date: str = "",
+    _admin: bool = Depends(require_admin),
+):
+    """All users' timelines for one day (single round-trip; shared settings load)."""
+    if not date:
+        date = datetime.now(_KST).strftime("%Y-%m-%d")
+    timelines = get_timelines_for_all_users(date)
+    return {"date": date, "timelines": timelines}
+
+
 @app.get("/api/admin/timeline/{user_id}")
 async def admin_timeline(
     user_id: str,
@@ -497,13 +510,11 @@ async def admin_stats(_admin: bool = Depends(require_admin)):
 
     total_today = count_screenshots_for_date(today)
 
-    disk = get_disk_usage()
     return {
         "total_users": len(users),
         "online_count": online,
         "idle_count": idle,
         "offline_count": offline,
-        "disk_usage_gb": disk["total_gb"],
         "total_screenshots_today": total_today,
     }
 
@@ -530,8 +541,11 @@ async def admin_update_settings(request: Request, _admin: bool = Depends(require
 
 
 @app.get("/api/admin/disk-usage")
-async def admin_disk_usage(_admin: bool = Depends(require_admin)):
-    return get_disk_usage()
+async def admin_disk_usage(
+    refresh: bool = Query(False, description="Bypass cache and rescan DATA_DIR"),
+    _admin: bool = Depends(require_admin),
+):
+    return get_disk_usage(force_refresh=refresh)
 
 
 @app.get("/api/admin/screenshot-thumb/{screenshot_id}")

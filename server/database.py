@@ -7,6 +7,7 @@ import os
 import glob
 import json
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -691,13 +692,18 @@ def _fetch_timeline_screenshot_rows(conn: sqlite3.Connection, user_id: str, date
     ).fetchall()
 
 
-def get_timeline(user_id: str, date: str) -> dict:
+def get_timeline(
+    user_id: str,
+    date: str,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict:
     """Build timeline segments and events for a user on a given date from all data sources."""
     date_prefix = f"{date}%"
     day_start_str = f"{date}T00:00:00"
     day_end_str = f"{date}T23:59:59"
 
-    settings = get_all_settings()
+    if settings is None:
+        settings = get_all_settings()
     offline_threshold_sec = int(settings.get("offline_threshold") or _DEFAULT_SETTINGS.get("offline_threshold", "60"))
     idle_threshold_rest_sec = int(settings.get("idle_threshold_rest") or _DEFAULT_SETTINGS.get("idle_threshold_rest", "180"))
 
@@ -883,6 +889,18 @@ def get_timeline(user_id: str, date: str) -> dict:
     return {"segments": final_segments, "events": events_out, "summary": summary}
 
 
+def get_timelines_for_all_users(date: str) -> dict[str, dict]:
+    """Build timelines for every registered user for one date (single settings load)."""
+    settings = get_all_settings()
+    timelines: dict[str, dict] = {}
+    for u in get_all_users():
+        uid = u.get("user_id")
+        if not uid:
+            continue
+        timelines[str(uid)] = get_timeline(str(uid), date, settings=settings)
+    return timelines
+
+
 # ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
@@ -933,6 +951,7 @@ def cleanup_old_data(days: int) -> dict[str, int]:
     finally:
         conn.close()
 
+    invalidate_disk_usage_cache()
     return counts
 
 
@@ -940,7 +959,25 @@ def cleanup_old_data(days: int) -> dict[str, int]:
 # Disk usage helper
 # ---------------------------------------------------------------------------
 
-def get_disk_usage() -> dict[str, Any]:
+_DISK_USAGE_TTL_SEC = 120.0
+_disk_usage_cache: Optional[tuple[float, dict[str, Any]]] = None
+
+
+def invalidate_disk_usage_cache() -> None:
+    global _disk_usage_cache
+    _disk_usage_cache = None
+
+
+def get_disk_usage(force_refresh: bool = False) -> dict[str, Any]:
+    global _disk_usage_cache
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and _disk_usage_cache is not None
+        and now < _disk_usage_cache[0]
+    ):
+        return _disk_usage_cache[1]
+
     total_size = 0
     file_count = 0
     for dirpath, _dirnames, filenames in os.walk(DATA_DIR):
@@ -951,9 +988,11 @@ def get_disk_usage() -> dict[str, Any]:
                 file_count += 1
             except OSError:
                 pass
-    return {
+    result: dict[str, Any] = {
         "data_dir": DATA_DIR,
         "total_bytes": total_size,
         "total_gb": round(total_size / (1024 ** 3), 3),
         "file_count": file_count,
     }
+    _disk_usage_cache = (now + _DISK_USAGE_TTL_SEC, result)
+    return result
