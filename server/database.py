@@ -7,6 +7,7 @@ import os
 import glob
 import json
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -133,11 +134,29 @@ _DEFAULT_SETTINGS: dict[str, str] = {
 }
 
 
+_TIMELINE_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_screenshots_user_captured ON screenshots(user_id, captured_at);
+CREATE INDEX IF NOT EXISTS idx_activities_user_started ON activities(user_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_events_user_ts ON events(user_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_keystrokes_user_ts ON keystrokes(user_id, timestamp);
+"""
+
+
+def _ensure_users_admin_columns(conn: sqlite3.Connection) -> None:
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "admin_hidden" not in cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN admin_hidden INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 def init_db() -> None:
     _ensure_dirs()
     conn = get_db()
     try:
         conn.executescript(_TABLES_SQL)
+        _ensure_users_admin_columns(conn)
+        conn.executescript(_TIMELINE_INDEX_SQL)
         for key, value in _DEFAULT_SETTINGS.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
@@ -193,8 +212,8 @@ def create_user(local_ip: str, display_name: str) -> dict[str, str]:
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO users (user_id, local_ip, display_name, registered_at, last_seen, status) "
-            "VALUES (?, ?, ?, ?, ?, 'ONLINE')",
+            "INSERT INTO users (user_id, local_ip, display_name, registered_at, last_seen, status, admin_hidden) "
+            "VALUES (?, ?, ?, ?, ?, 'ONLINE', 0)",
             (user_id, local_ip, display_name, now, now),
         )
         conn.commit()
@@ -221,13 +240,92 @@ def get_user_by_ip(local_ip: str) -> Optional[dict]:
         conn.close()
 
 
-def get_all_users() -> list[dict]:
+def get_all_users(include_hidden: bool = True) -> list[dict]:
+    """Return users. When include_hidden is False, omit users marked admin_hidden (dashboard & stats)."""
     conn = get_db()
     try:
-        rows = conn.execute("SELECT * FROM users ORDER BY display_name").fetchall()
+        if include_hidden:
+            rows = conn.execute("SELECT * FROM users ORDER BY display_name").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM users WHERE COALESCE(admin_hidden, 0) = 0 ORDER BY display_name"
+            ).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def set_user_admin_hidden(user_id: str, hidden: bool) -> bool:
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE users SET admin_hidden=? WHERE user_id=?",
+            (1 if hidden else 0, user_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def _abs_screenshot_disk_path(image_path: str) -> Optional[str]:
+    """Resolve DB image_path (/images/...) to absolute file under DATA_DIR/images."""
+    images_root = os.path.join(DATA_DIR, "images")
+    if not image_path or not isinstance(image_path, str):
+        return None
+    if image_path.startswith("/images/"):
+        rel = image_path[len("/images/") :].lstrip("/\\")
+        if ".." in rel.replace("\\", "/"):
+            return None
+        full = os.path.abspath(os.path.join(images_root, rel))
+        base = os.path.abspath(images_root)
+        try:
+            if os.path.commonpath([full, base]) != base:
+                return None
+        except ValueError:
+            return None
+        return full if os.path.isfile(full) else None
+    if os.path.isabs(image_path) and os.path.isfile(image_path):
+        return image_path
+    return None
+
+
+def delete_user_and_data(user_id: str) -> dict[str, int]:
+    """Remove user row and all related data; delete screenshot files and thumb cache entries."""
+    counts: dict[str, int] = {}
+    conn = get_db()
+    thumb_dir = os.path.join(DATA_DIR, ".thumb_cache")
+    try:
+        shot_rows = conn.execute(
+            "SELECT id, image_path FROM screenshots WHERE user_id=?", (user_id,)
+        ).fetchall()
+        for r in shot_rows:
+            sid = r["id"]
+            path = _abs_screenshot_disk_path(r["image_path"] or "")
+            if path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            if sid and os.path.isdir(thumb_dir):
+                for fn in glob.glob(os.path.join(thumb_dir, f"{sid}_*.jpg")):
+                    try:
+                        os.remove(fn)
+                    except OSError:
+                        pass
+
+        for table in ("events", "keystrokes", "activities", "screenshots"):
+            cur = conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
+            counts[table] = cur.rowcount or 0
+
+        cur = conn.execute("DELETE FROM users WHERE user_id=?", (user_id,))
+        counts["users"] = cur.rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+
+    invalidate_disk_usage_cache()
+    return counts
 
 
 def update_user_name(user_id: str, display_name: str) -> bool:
@@ -315,6 +413,39 @@ def add_screenshot(
     finally:
         conn.close()
     return sid
+
+
+def get_screenshot_by_id(screenshot_id: str) -> Optional[dict]:
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM screenshots WHERE id=?", (screenshot_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def count_screenshots_for_date(date: str, exclude_hidden_users: bool = True) -> int:
+    """COUNT(*) for screenshots on a calendar day; optionally exclude admin-hidden users."""
+    conn = get_db()
+    prefix = f"{date}%"
+    try:
+        if exclude_hidden_users:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt FROM screenshots s
+                INNER JOIN users u ON u.user_id = s.user_id
+                WHERE s.captured_at LIKE ? AND COALESCE(u.admin_hidden, 0) = 0
+                """,
+                (prefix,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM screenshots WHERE captured_at LIKE ?",
+                (prefix,),
+            ).fetchone()
+        return int(row["cnt"] or 0) if row else 0
+    finally:
+        conn.close()
 
 
 def get_screenshots(
@@ -624,24 +755,63 @@ def get_events(
 # Timeline builder
 # ---------------------------------------------------------------------------
 
-def get_timeline(user_id: str, date: str) -> dict:
+_MAX_TIMELINE_SCREENSHOT_POINTS = 1600
+
+
+def _fetch_timeline_screenshot_rows(conn: sqlite3.Connection, user_id: str, date_prefix: str) -> list[sqlite3.Row]:
+    """Return screenshot rows for timeline; subsample when count is huge (same-day captures)."""
+    cnt_row = conn.execute(
+        "SELECT COUNT(*) AS c FROM screenshots WHERE user_id=? AND captured_at LIKE ?",
+        (user_id, date_prefix),
+    ).fetchone()
+    cnt = int(cnt_row["c"] or 0) if cnt_row else 0
+    if cnt <= _MAX_TIMELINE_SCREENSHOT_POINTS:
+        return conn.execute(
+            "SELECT captured_at, active_process, trigger FROM screenshots "
+            "WHERE user_id=? AND captured_at LIKE ? ORDER BY captured_at ASC",
+            (user_id, date_prefix),
+        ).fetchall()
+    # ceil(cnt / max) so step >= 2 when cnt > max (avoid step=1 which would select every row)
+    step = (cnt + _MAX_TIMELINE_SCREENSHOT_POINTS - 1) // _MAX_TIMELINE_SCREENSHOT_POINTS
+    return conn.execute(
+        """
+        WITH ordered AS (
+            SELECT captured_at, active_process, trigger,
+                   ROW_NUMBER() OVER (ORDER BY captured_at ASC) AS rn
+            FROM screenshots
+            WHERE user_id=? AND captured_at LIKE ?
+        ),
+        mx AS (SELECT MAX(rn) AS m FROM ordered)
+        SELECT ordered.captured_at, ordered.active_process, ordered.trigger
+        FROM ordered, mx
+        WHERE ordered.rn = 1 OR ordered.rn = mx.m OR ((ordered.rn - 1) % ? = 0)
+        ORDER BY ordered.captured_at ASC
+        """,
+        (user_id, date_prefix, step),
+    ).fetchall()
+
+
+def get_timeline(
+    user_id: str,
+    date: str,
+    settings: Optional[dict[str, Any]] = None,
+) -> dict:
     """Build timeline segments and events for a user on a given date from all data sources."""
     date_prefix = f"{date}%"
     day_start_str = f"{date}T00:00:00"
     day_end_str = f"{date}T23:59:59"
 
-    offline_threshold_sec = int(get_setting("offline_threshold") or _DEFAULT_SETTINGS.get("offline_threshold", "60"))
+    if settings is None:
+        settings = get_all_settings()
+    offline_threshold_sec = int(settings.get("offline_threshold") or _DEFAULT_SETTINGS.get("offline_threshold", "60"))
+    idle_threshold_rest_sec = int(settings.get("idle_threshold_rest") or _DEFAULT_SETTINGS.get("idle_threshold_rest", "180"))
 
     conn = get_db()
     keystroke_count = 0
     try:
         timestamps: list[tuple[str, str, str]] = []
 
-        shot_rows = conn.execute(
-            "SELECT captured_at, active_process, trigger FROM screenshots "
-            "WHERE user_id=? AND captured_at LIKE ? ORDER BY captured_at ASC",
-            (user_id, date_prefix),
-        ).fetchall()
+        shot_rows = _fetch_timeline_screenshot_rows(conn, user_id, date_prefix)
         for r in shot_rows:
             timestamps.append((r["captured_at"], r["active_process"] or "", "ONLINE"))
 
@@ -691,9 +861,11 @@ def get_timeline(user_id: str, date: str) -> dict:
             status = info.get("status", "ONLINE")
             timestamps.append((r["timestamp"], proc, status))
 
+        # Omit heartbeats from marker list (UI skips them; cuts payload size on busy days).
         event_rows = conn.execute(
             "SELECT event_type, timestamp, details FROM events "
-            "WHERE user_id=? AND timestamp LIKE ? ORDER BY timestamp ASC",
+            "WHERE user_id=? AND timestamp LIKE ? AND LOWER(event_type) NOT IN ('heartbeat') "
+            "ORDER BY timestamp ASC",
             (user_id, date_prefix),
         ).fetchall()
         events_out = [
@@ -768,8 +940,7 @@ def get_timeline(user_id: str, date: str) -> dict:
                         "process": "",
                     })
                 else:
-                    idle_rest_sec = int(get_setting("idle_threshold_rest") or _DEFAULT_SETTINGS.get("idle_threshold_rest", "180"))
-                    gap_status = "IDLE" if gap_sec >= idle_rest_sec else "REST"
+                    gap_status = "IDLE" if gap_sec >= idle_threshold_rest_sec else "REST"
                     final_segments.append({
                         "start": _ts_to_str(prev_end),
                         "end": _ts_to_str(seg_start),
@@ -815,6 +986,18 @@ def get_timeline(user_id: str, date: str) -> dict:
     }
 
     return {"segments": final_segments, "events": events_out, "summary": summary}
+
+
+def get_timelines_for_all_users(date: str) -> dict[str, dict]:
+    """Build timelines for every registered user for one date (single settings load)."""
+    settings = get_all_settings()
+    timelines: dict[str, dict] = {}
+    for u in get_all_users(include_hidden=False):
+        uid = u.get("user_id")
+        if not uid:
+            continue
+        timelines[str(uid)] = get_timeline(str(uid), date, settings=settings)
+    return timelines
 
 
 # ---------------------------------------------------------------------------
@@ -867,6 +1050,7 @@ def cleanup_old_data(days: int) -> dict[str, int]:
     finally:
         conn.close()
 
+    invalidate_disk_usage_cache()
     return counts
 
 
@@ -874,7 +1058,25 @@ def cleanup_old_data(days: int) -> dict[str, int]:
 # Disk usage helper
 # ---------------------------------------------------------------------------
 
-def get_disk_usage() -> dict[str, Any]:
+_DISK_USAGE_TTL_SEC = 120.0
+_disk_usage_cache: Optional[tuple[float, dict[str, Any]]] = None
+
+
+def invalidate_disk_usage_cache() -> None:
+    global _disk_usage_cache
+    _disk_usage_cache = None
+
+
+def get_disk_usage(force_refresh: bool = False) -> dict[str, Any]:
+    global _disk_usage_cache
+    now = time.monotonic()
+    if (
+        not force_refresh
+        and _disk_usage_cache is not None
+        and now < _disk_usage_cache[0]
+    ):
+        return _disk_usage_cache[1]
+
     total_size = 0
     file_count = 0
     for dirpath, _dirnames, filenames in os.walk(DATA_DIR):
@@ -885,9 +1087,11 @@ def get_disk_usage() -> dict[str, Any]:
                 file_count += 1
             except OSError:
                 pass
-    return {
+    result: dict[str, Any] = {
         "data_dir": DATA_DIR,
         "total_bytes": total_size,
         "total_gb": round(total_size / (1024 ** 3), 3),
         "file_count": file_count,
     }
+    _disk_usage_cache = (now + _DISK_USAGE_TTL_SEC, result)
+    return result
