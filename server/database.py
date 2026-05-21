@@ -475,12 +475,17 @@ def get_screenshots(
 
     conn = get_db()
     try:
-        total = conn.execute(f"SELECT COUNT(*) as cnt FROM screenshots{where}", params).fetchone()["cnt"]
         rows = conn.execute(
-            f"SELECT * FROM screenshots{where} ORDER BY captured_at DESC LIMIT ? OFFSET ?",
-            params + [limit, (page - 1) * limit],
+            f"SELECT * FROM screenshots{where} ORDER BY captured_at DESC",
+            params,
         ).fetchall()
-        return [dict(r) for r in rows], total
+        valid = [
+            dict(r) for r in rows
+            if _abs_screenshot_disk_path(r["image_path"] or "")
+        ]
+        total = len(valid)
+        start = (page - 1) * limit
+        return valid[start : start + limit], total
     finally:
         conn.close()
 
