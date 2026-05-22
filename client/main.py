@@ -72,6 +72,8 @@ DEFAULT_KEYSTROKE_FLUSH = 60
 HEARTBEAT_INTERVAL = 30
 CONNECTION_CHECK_INTERVAL = 5
 PROCESS_POLL_INTERVAL = 1
+PRIVACY_PAUSE_DURATION_SEC = 20 * 60
+TAM_USER_CAPTURE_HOLD_SEC = 2 * 60
 
 
 def _windows_set_run_key(app_name: str, command: str) -> bool:
@@ -168,12 +170,96 @@ class TAMClient:
         self._idle_threshold_idle_sec = 420
         self._mouse_listener = None
         self._pending_process_capture_at: float | None = None
+        self._privacy_pause_lock = threading.Lock()
+        self._privacy_pause_until = 0.0
+        self._privacy_pause_timer: threading.Timer | None = None
+        self._tam_user_capture_hold_until = 0.0
 
     def _now(self) -> str:
         return datetime.now(self._tz).isoformat()
 
+    def _is_privacy_pause_active(self) -> bool:
+        return time.monotonic() < self._privacy_pause_until
+
+    @staticmethod
+    def _is_tam_user_process(process_name: str) -> bool:
+        if not process_name:
+            return False
+        base = process_name.lower()
+        if base.endswith(".exe"):
+            base = base[:-4]
+        return base == "tam_user"
+
+    def _refresh_tam_user_capture_hold(self) -> None:
+        info = self._process_monitor.get_active_window_info()
+        if self._is_tam_user_process(info.get("process_name", "")):
+            until = time.monotonic() + TAM_USER_CAPTURE_HOLD_SEC
+            if until > self._tam_user_capture_hold_until:
+                self._tam_user_capture_hold_until = until
+
+    def _should_skip_screen_capture(self) -> bool:
+        if self._is_privacy_pause_active():
+            return True
+        self._refresh_tam_user_capture_hold()
+        return time.monotonic() < self._tam_user_capture_hold_until
+
+    def _start_privacy_pause(self) -> bool:
+        """Pause screenshots and keyboard capture for 20 minutes; admin still sees ONLINE."""
+        with self._privacy_pause_lock:
+            if self._is_privacy_pause_active():
+                return False
+            self._privacy_pause_until = time.monotonic() + PRIVACY_PAUSE_DURATION_SEC
+            if self._privacy_pause_timer:
+                self._privacy_pause_timer.cancel()
+            if self._keylogger:
+                remaining = self._keylogger.get_and_clear_buffer()
+                self._keylogger.stop()
+                if remaining and self._buffer:
+                    for e in remaining:
+                        e["user_id"] = self._config["user_id"]
+                        if "id" not in e:
+                            e["id"] = uuid.uuid4().hex
+                    self._buffer.save_keystrokes(remaining)
+            if self._tray:
+                self._tray.set_status("privacy_pause")
+            self._privacy_pause_timer = threading.Timer(
+                PRIVACY_PAUSE_DURATION_SEC, self._end_privacy_pause
+            )
+            self._privacy_pause_timer.daemon = True
+            self._privacy_pause_timer.start()
+        logger.debug("Capture hold started (%ds)", PRIVACY_PAUSE_DURATION_SEC)
+        try:
+            if self._uploader:
+                window_info = self._process_monitor.get_active_window_info()
+                if (not window_info.get("process_name")) and self._last_process_info:
+                    window_info = self._last_process_info
+                self._uploader.send_heartbeat(
+                    user_id=self._config["user_id"],
+                    local_ip=get_local_ip(),
+                    status="ONLINE",
+                    active_process=window_info.get("process_name", ""),
+                    active_window=window_info.get("window_title", ""),
+                )
+        except Exception as exc:
+            logger.debug("Immediate heartbeat after capture hold failed: %s", exc)
+        return True
+
+    def _end_privacy_pause(self) -> None:
+        with self._privacy_pause_lock:
+            self._privacy_pause_until = 0.0
+            self._privacy_pause_timer = None
+            if self._keylogger:
+                self._keylogger.start()
+            if self._tray and self._conn_monitor:
+                online = self._conn_monitor.is_server_reachable()
+                self._tray.set_status("recording" if online else "buffering")
+        logger.debug("Capture hold ended")
+
     def _do_registration(self):
-        self._tray = TrayIcon(on_name_change_callback=self._handle_name_change)
+        self._tray = TrayIcon(
+            on_name_change_callback=self._handle_name_change,
+            on_privacy_pause_callback=self._start_privacy_pause,
+        )
         reg_info = self._tray.show_registration_dialog()
 
         if not reg_info:
@@ -242,6 +328,8 @@ class TAMClient:
             logger.warning("Could not fetch server settings: %s", exc)
 
     def _capture_and_upload(self, trigger: str = "periodic"):
+        if self._should_skip_screen_capture():
+            return
         with self._capture_lock:
             try:
                 window_info = self._process_monitor.get_active_window_info()
@@ -279,6 +367,9 @@ class TAMClient:
             self._shutdown.wait(wait_sec)
             if self._shutdown.is_set():
                 break
+            if self._should_skip_screen_capture():
+                wait_sec = min(wait_sec, 5)
+                continue
             try:
                 current_hash = compute_screen_hash()
                 if current_hash != self._last_screen_hash:
@@ -307,11 +398,13 @@ class TAMClient:
         while not self._shutdown.is_set():
             try:
                 current_info = self._process_monitor.get_active_window_info()
+                privacy_pause = self._is_privacy_pause_active()
+                skip_capture = self._should_skip_screen_capture()
 
                 if self._process_monitor.has_process_changed(self._last_process_info):
                     now = self._now()
 
-                    if self._last_process_info:
+                    if self._last_process_info and not privacy_pause:
                         activity = {
                             "id": uuid.uuid4().hex,
                             "user_id": self._config["user_id"],
@@ -326,14 +419,15 @@ class TAMClient:
                     current_info["_started_at"] = now
                     self._last_process_info = current_info
 
-                    # Schedule a delayed capture 10 seconds after the process/window change.
-                    # If the process/window changes again before that, the pending capture
-                    # will be replaced and the short-lived window will not be captured.
-                    self._pending_process_capture_at = time.time() + 10.0
+                    if not privacy_pause and not skip_capture:
+                        # Schedule a delayed capture 10 seconds after the process/window change.
+                        # If the process/window changes again before that, the pending capture
+                        # will be replaced and the short-lived window will not be captured.
+                        self._pending_process_capture_at = time.time() + 10.0
                 else:
-                    # No process/window change detected; if there is a pending capture and
-                    # the same process/window is still active after the delay, fire it now.
-                    if self._pending_process_capture_at is not None:
+                    if privacy_pause or skip_capture:
+                        self._pending_process_capture_at = None
+                    elif self._pending_process_capture_at is not None:
                         now_ts = time.time()
                         if now_ts >= self._pending_process_capture_at and self._last_process_info:
                             self._capture_and_upload(trigger="process_change")
@@ -349,6 +443,8 @@ class TAMClient:
             self._shutdown.wait(DEFAULT_KEYSTROKE_FLUSH)
             if self._shutdown.is_set():
                 break
+            if self._is_privacy_pause_active():
+                continue
             try:
                 entries = self._keylogger.get_and_clear_buffer()
                 if entries:
@@ -371,13 +467,16 @@ class TAMClient:
                 window_info = self._process_monitor.get_active_window_info() if self._process_monitor else {}
                 if (not window_info.get("process_name")) and self._last_process_info:
                     window_info = self._last_process_info
-                idle_sec = self._activity_tracker.get_idle_seconds() if self._activity_tracker else 0
-                if idle_sec >= self._idle_threshold_idle_sec:
-                    status = "IDLE"
-                elif idle_sec >= self._idle_threshold_rest_sec:
-                    status = "REST"
-                else:
+                if self._is_privacy_pause_active():
                     status = "ONLINE"
+                else:
+                    idle_sec = self._activity_tracker.get_idle_seconds() if self._activity_tracker else 0
+                    if idle_sec >= self._idle_threshold_idle_sec:
+                        status = "IDLE"
+                    elif idle_sec >= self._idle_threshold_rest_sec:
+                        status = "REST"
+                    else:
+                        status = "ONLINE"
                 self._uploader.send_heartbeat(
                     user_id=self._config["user_id"],
                     local_ip=local_ip,
@@ -393,7 +492,7 @@ class TAMClient:
         while not self._shutdown.is_set():
             try:
                 online = self._conn_monitor.check_connection()
-                if self._tray:
+                if self._tray and not self._is_privacy_pause_active():
                     self._tray.set_status("recording" if online else "buffering")
             except Exception as exc:
                 logger.error("Connection monitor error: %s", exc)
@@ -429,7 +528,10 @@ class TAMClient:
             self._do_registration()
         else:
             self._config = load_config()
-            self._tray = TrayIcon(on_name_change_callback=self._handle_name_change)
+            self._tray = TrayIcon(
+                on_name_change_callback=self._handle_name_change,
+                on_privacy_pause_callback=self._start_privacy_pause,
+            )
 
         self._server_url = (
             f"http://{self._config['server_ip']}:{self._config.get('server_port', 8007)}"
@@ -506,6 +608,10 @@ class TAMClient:
             logger.info("Keyboard interrupt received.")
         finally:
             self._shutdown.set()
+            with self._privacy_pause_lock:
+                if self._privacy_pause_timer:
+                    self._privacy_pause_timer.cancel()
+                    self._privacy_pause_timer = None
             try:
                 send_app_stop()
             except Exception as exc:

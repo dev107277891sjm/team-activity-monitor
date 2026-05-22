@@ -20,6 +20,7 @@ def _create_icon(color: str = "green", size: int = 64) -> Image.Image:
         "green": (34, 197, 94),
         "yellow": (234, 179, 8),
         "red": (239, 68, 68),
+        "blue": (59, 130, 246),
     }
     rgb = colors.get(color, colors["green"])
 
@@ -43,8 +44,13 @@ def _create_icon(color: str = "green", size: int = 64) -> Image.Image:
 
 
 class TrayIcon:
-    def __init__(self, on_name_change_callback: Callable | None = None):
+    def __init__(
+        self,
+        on_name_change_callback: Callable | None = None,
+        on_privacy_pause_callback: Callable[[], bool] | None = None,
+    ):
         self._on_name_change = on_name_change_callback
+        self._on_privacy_pause = on_privacy_pause_callback
         self._tray: pystray.Icon | None = None
         self._status = "recording"
         self._current_name = ""
@@ -53,6 +59,7 @@ class TrayIcon:
         status_text = {
             "recording": "Status: Recording",
             "buffering": "Status: Buffering (offline)",
+            "privacy_pause": "Status: Recording",
             "error": "Status: Error",
         }.get(self._status, f"Status: {self._status}")
 
@@ -64,9 +71,12 @@ class TrayIcon:
         )
 
     def _status_color(self) -> str:
-        return {"recording": "green", "buffering": "yellow", "error": "red"}.get(
-            self._status, "green"
-        )
+        return {
+            "recording": "green",
+            "buffering": "yellow",
+            "privacy_pause": "blue",
+            "error": "red",
+        }.get(self._status, "green")
 
     def run(self):
         self._tray = pystray.Icon(
@@ -94,13 +104,50 @@ class TrayIcon:
 
     def _on_about(self, icon, item):
         def _show():
+            from PIL import ImageTk
+
             root = tk.Tk()
-            root.withdraw()
-            messagebox.showinfo(
-                "Team Activity Monitor",
-                "TAM User App v1.0\n\nTeam Activity Monitor client.\nCaptures screen and process activity.",
-            )
-            root.destroy()
+            root.title("Team Activity Monitor")
+            root.resizable(False, False)
+            root.attributes("-topmost", True)
+
+            frame = ttk.Frame(root, padding=24)
+            frame.pack()
+
+            pil_icon = _create_icon("green", 96)
+            photo = ImageTk.PhotoImage(pil_icon)
+            icon_label = tk.Label(frame, image=photo)
+            icon_label.image = photo
+            icon_label.pack(pady=(0, 12))
+
+            ttk.Label(
+                frame,
+                text="Team Activity Monitor",
+                font=("Segoe UI", 14, "bold"),
+            ).pack()
+            ttk.Label(frame, text="TAM User App v1.0", foreground="gray").pack(pady=(4, 0))
+            ttk.Label(
+                frame,
+                text="Captures screen and process activity.",
+                wraplength=320,
+                justify="center",
+            ).pack(pady=(8, 0))
+
+            def on_icon_double_click(_event=None):
+                if self._on_privacy_pause:
+                    self._on_privacy_pause()
+
+            icon_label.bind("<Double-Button-1>", on_icon_double_click)
+
+            ttk.Button(frame, text="Close", command=root.destroy).pack(pady=(16, 0))
+
+            root.update_idletasks()
+            w = root.winfo_width()
+            h = root.winfo_height()
+            x = (root.winfo_screenwidth() // 2) - (w // 2)
+            y = (root.winfo_screenheight() // 2) - (h // 2)
+            root.geometry(f"+{x}+{y}")
+            root.mainloop()
 
         threading.Thread(target=_show, daemon=True).start()
 
