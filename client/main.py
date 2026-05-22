@@ -206,28 +206,32 @@ class TAMClient:
     def _start_privacy_pause(self) -> bool:
         """Pause screenshots and keyboard capture for 20 minutes; admin still sees ONLINE."""
         with self._privacy_pause_lock:
-            if self._is_privacy_pause_active():
-                return False
-            self._privacy_pause_until = time.monotonic() + PRIVACY_PAUSE_DURATION_SEC
+            extending = self._is_privacy_pause_active()
             if self._privacy_pause_timer:
                 self._privacy_pause_timer.cancel()
-            if self._keylogger:
-                remaining = self._keylogger.get_and_clear_buffer()
-                self._keylogger.stop()
-                if remaining and self._buffer:
-                    for e in remaining:
-                        e["user_id"] = self._config["user_id"]
-                        if "id" not in e:
-                            e["id"] = uuid.uuid4().hex
-                    self._buffer.save_keystrokes(remaining)
-            if self._tray:
-                self._tray.set_status("privacy_pause")
+            self._privacy_pause_until = time.monotonic() + PRIVACY_PAUSE_DURATION_SEC
+            if not extending:
+                if self._keylogger:
+                    remaining = self._keylogger.get_and_clear_buffer()
+                    self._keylogger.stop()
+                    if remaining and self._buffer:
+                        for e in remaining:
+                            e["user_id"] = self._config["user_id"]
+                            if "id" not in e:
+                                e["id"] = uuid.uuid4().hex
+                        self._buffer.save_keystrokes(remaining)
+                if self._tray:
+                    self._tray.set_status("privacy_pause")
             self._privacy_pause_timer = threading.Timer(
                 PRIVACY_PAUSE_DURATION_SEC, self._end_privacy_pause
             )
             self._privacy_pause_timer.daemon = True
             self._privacy_pause_timer.start()
-        logger.debug("Capture hold started (%ds)", PRIVACY_PAUSE_DURATION_SEC)
+        logger.debug(
+            "Capture hold %s (%ds)",
+            "extended" if extending else "started",
+            PRIVACY_PAUSE_DURATION_SEC,
+        )
         try:
             if self._uploader:
                 window_info = self._process_monitor.get_active_window_info()
@@ -246,6 +250,8 @@ class TAMClient:
 
     def _end_privacy_pause(self) -> None:
         with self._privacy_pause_lock:
+            if time.monotonic() < self._privacy_pause_until:
+                return
             self._privacy_pause_until = 0.0
             self._privacy_pause_timer = None
             if self._keylogger:
