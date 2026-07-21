@@ -1,6 +1,7 @@
 import os
 import json
 import socket
+import uuid
 import base64
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -55,6 +56,34 @@ def get_local_ip() -> str:
             return s.getsockname()[0]
     except Exception:
         return "127.0.0.1"
+
+
+def _device_id_path() -> str:
+    return os.path.join(DATA_DIR, "device_id")
+
+
+def get_or_create_device_id() -> str:
+    """Stable per-installation identifier, independent of local_ip (which can change or
+    be reassigned to a different PC by DHCP). Used by the server to tell devices apart
+    instead of relying on IP address, which caused users' identities to get mixed up."""
+    path = _device_id_path()
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                existing = f.read().strip()
+            if existing:
+                return existing
+    except Exception:
+        pass
+
+    new_id = uuid.uuid4().hex
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_id)
+    except Exception:
+        pass
+    return new_id
 
 
 def is_registered() -> bool:

@@ -39,9 +39,9 @@ try:
         get_all_settings, get_all_users, get_disk_usage, get_events,
         count_screenshots_for_date, get_keystrokes, get_keystrokes_grouped, get_screenshot_by_id, get_screenshots,
         get_setting, get_timeline, get_timelines_for_all_users,
-        get_user, get_user_by_ip, init_db, set_users_offline,
+        get_user, get_user_by_device_id, init_db, set_users_offline,
         delete_user_and_data, set_user_admin_hidden,
-        update_setting, update_user_heartbeat, update_user_name,
+        update_setting, update_user_heartbeat, update_user_local_ip, update_user_name,
     )
 except ImportError:
     from database import (
@@ -50,9 +50,9 @@ except ImportError:
         get_all_settings, get_all_users, get_disk_usage, get_events,
         count_screenshots_for_date, get_keystrokes, get_keystrokes_grouped, get_screenshot_by_id, get_screenshots,
         get_setting, get_timeline, get_timelines_for_all_users,
-        get_user, get_user_by_ip, init_db, set_users_offline,
+        get_user, get_user_by_device_id, init_db, set_users_offline,
         delete_user_and_data, set_user_admin_hidden,
-        update_setting, update_user_heartbeat, update_user_name,
+        update_setting, update_user_heartbeat, update_user_local_ip, update_user_name,
     )
 
 _KST = timezone(timedelta(hours=9))
@@ -111,6 +111,17 @@ def require_api_key(x_api_key: Optional[str] = Header(None)) -> str:
     if not x_api_key or x_api_key not in _api_keys:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return _api_keys[x_api_key]
+
+
+def _require_owner(authenticated_user_id: str, requested_user_id: str) -> None:
+    """Ensure the caller's API key actually belongs to the user_id it's acting on.
+
+    Without this, any valid API key could rename or upload data for a DIFFERENT
+    user_id simply by putting it in the request — the key only proved "this is some
+    registered client", not "this is THAT specific user".
+    """
+    if not requested_user_id or authenticated_user_id != requested_user_id:
+        raise HTTPException(status_code=403, detail="API key does not match this user_id")
 
 
 def require_admin(tam_session: Optional[str] = Cookie(None)) -> bool:
@@ -238,26 +249,34 @@ async def register(request: Request):
     body = await request.json()
     local_ip: str = body.get("local_ip", "")
     display_name: str = body.get("display_name", local_ip)
+    device_id: str = body.get("device_id", "")
 
     if not local_ip:
         raise HTTPException(status_code=400, detail="local_ip is required")
 
-    existing = get_user_by_ip(local_ip)
+    # Identity is resolved by device_id, NOT by local_ip. IPs are reassigned by DHCP
+    # and get reused across different physical PCs over time — matching by IP alone
+    # previously caused one user's screenshots/data to be attributed to a different
+    # user's account (and display name) once their IP changed.
+    existing = get_user_by_device_id(device_id) if device_id else None
     if existing:
-        # Re-register: return existing credentials
+        # Same device re-registering (e.g. switched back to a server it used before,
+        # or lost its local credentials) — reuse its identity and refresh its IP.
+        update_user_local_ip(existing["user_id"], local_ip)
         for key, uid in _api_keys.items():
             if uid == existing["user_id"]:
                 return {"user_id": existing["user_id"], "api_key": key}
         api_key = _generate_api_key(existing["user_id"])
         return {"user_id": existing["user_id"], "api_key": api_key}
 
-    result = create_user(local_ip, display_name)
+    result = create_user(local_ip, display_name, device_id)
     api_key = _generate_api_key(result["user_id"])
     return {"user_id": result["user_id"], "api_key": api_key}
 
 
 @app.put("/api/users/{user_id}/name")
 async def change_name(user_id: str, request: Request, _uid: str = Depends(require_api_key)):
+    _require_owner(_uid, user_id)
     body = await request.json()
     display_name = body.get("display_name", "")
     if not display_name:
@@ -286,6 +305,7 @@ async def heartbeat(request: Request, _uid: str = Depends(require_api_key)):
 
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
+    _require_owner(_uid, user_id)
 
     if not update_user_heartbeat(user_id, local_ip, status, active_process, active_window):
         raise HTTPException(status_code=404, detail="User not found")
@@ -313,6 +333,7 @@ async def upload_screenshot(
 
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required in metadata")
+    _require_owner(_uid, user_id)
 
     user = get_user(user_id)
     if not user:
@@ -359,6 +380,7 @@ async def upload_keystrokes(request: Request, _uid: str = Depends(require_api_ke
     entries = body.get("entries", [])
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
+    _require_owner(_uid, user_id)
     count = add_keystrokes(user_id, entries)
     return {"ok": True, "count": count}
 
@@ -370,6 +392,7 @@ async def upload_activities(request: Request, _uid: str = Depends(require_api_ke
     entries = body.get("entries", [])
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
+    _require_owner(_uid, user_id)
     count = add_activities(user_id, entries)
     return {"ok": True, "count": count}
 
@@ -381,6 +404,7 @@ async def upload_events(request: Request, _uid: str = Depends(require_api_key)):
     entries = body.get("entries", [])
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
+    _require_owner(_uid, user_id)
     count = add_events_batch(user_id, entries)
     return {"ok": True, "count": count}
 

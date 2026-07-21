@@ -148,6 +148,14 @@ def _ensure_users_admin_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE users ADD COLUMN admin_hidden INTEGER NOT NULL DEFAULT 0"
         )
+    if "device_id" not in cols:
+        # Stable per-installation identity. local_ip alone is NOT safe to use for
+        # identifying a device (DHCP reassigns IPs between different PCs over time),
+        # which previously caused one user's data to get attributed to another user's
+        # display name after IP changes. Not UNIQUE at the DB level on purpose — see
+        # the local_ip UNIQUE-constraint lesson below.
+        conn.execute("ALTER TABLE users ADD COLUMN device_id TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_device_id ON users(device_id)")
 
 
 def init_db() -> None:
@@ -206,15 +214,43 @@ def update_setting(key: str, value: str) -> None:
 # Users CRUD
 # ---------------------------------------------------------------------------
 
-def create_user(local_ip: str, display_name: str) -> dict[str, str]:
+def _set_user_local_ip_safe(conn: sqlite3.Connection, user_id: str, local_ip: str) -> None:
+    """Assign local_ip to user_id, releasing it from any other row first.
+
+    local_ip is UNIQUE, but real-world IPs get reassigned by DHCP or reused by a
+    different PC over time. Without this, a plain UPDATE/INSERT can raise
+    IntegrityError and silently fail (e.g. heartbeats), or — worse — earlier code
+    used local_ip to *identify* a returning user, which let one user's identity
+    (and display name) get handed to a different physical device that happened to
+    share that IP. Identity is now based on a stable device_id instead; local_ip is
+    kept only as display/info metadata, so releasing it from a stale row is safe.
+    """
+    if not local_ip:
+        return
+    try:
+        conn.execute("UPDATE users SET local_ip=? WHERE user_id=?", (local_ip, user_id))
+    except sqlite3.IntegrityError:
+        conn.execute(
+            "UPDATE users SET local_ip=NULL WHERE local_ip=? AND user_id!=?",
+            (local_ip, user_id),
+        )
+        conn.execute("UPDATE users SET local_ip=? WHERE user_id=?", (local_ip, user_id))
+
+
+def create_user(local_ip: str, display_name: str, device_id: str = "") -> dict[str, str]:
     user_id = _new_id()
     now = _now_iso()
     conn = get_db()
     try:
+        if local_ip:
+            # A different, genuinely new device is now using this IP — release it
+            # from whichever stale row currently holds it before inserting.
+            conn.execute("UPDATE users SET local_ip=NULL WHERE local_ip=?", (local_ip,))
         conn.execute(
-            "INSERT INTO users (user_id, local_ip, display_name, registered_at, last_seen, status, admin_hidden) "
-            "VALUES (?, ?, ?, ?, ?, 'ONLINE', 0)",
-            (user_id, local_ip, display_name, now, now),
+            "INSERT INTO users "
+            "(user_id, local_ip, display_name, registered_at, last_seen, status, admin_hidden, device_id) "
+            "VALUES (?, ?, ?, ?, ?, 'ONLINE', 0, ?)",
+            (user_id, local_ip, display_name, now, now, device_id),
         )
         conn.commit()
     finally:
@@ -236,6 +272,26 @@ def get_user_by_ip(local_ip: str) -> Optional[dict]:
     try:
         row = conn.execute("SELECT * FROM users WHERE local_ip=?", (local_ip,)).fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_user_by_device_id(device_id: str) -> Optional[dict]:
+    if not device_id:
+        return None
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE device_id=?", (device_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_user_local_ip(user_id: str, local_ip: str) -> None:
+    conn = get_db()
+    try:
+        _set_user_local_ip_safe(conn, user_id, local_ip)
+        conn.commit()
     finally:
         conn.close()
 
@@ -350,9 +406,10 @@ def update_user_heartbeat(
     now = _now_iso()
     conn = get_db()
     try:
+        _set_user_local_ip_safe(conn, user_id, local_ip)
         cur = conn.execute(
-            "UPDATE users SET last_seen=?, local_ip=?, status=? WHERE user_id=?",
-            (now, local_ip, status, user_id),
+            "UPDATE users SET last_seen=?, status=? WHERE user_id=?",
+            (now, status, user_id),
         )
         conn.commit()
         if cur.rowcount > 0:

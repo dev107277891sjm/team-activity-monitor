@@ -18,6 +18,7 @@ try:
     from client.config import (
         DATA_DIR,
         get_local_ip,
+        get_or_create_device_id,
         is_registered,
         load_config,
         save_config,
@@ -27,6 +28,7 @@ try:
         fetch_server_settings,
         register_with_server,
         update_display_name,
+        verify_server_reachable,
     )
     from client.keylogger import KeyLogger
     from client.process_monitor import ProcessMonitor
@@ -40,6 +42,7 @@ except ImportError:
     from config import (
         DATA_DIR,
         get_local_ip,
+        get_or_create_device_id,
         is_registered,
         load_config,
         save_config,
@@ -49,6 +52,7 @@ except ImportError:
         fetch_server_settings,
         register_with_server,
         update_display_name,
+        verify_server_reachable,
     )
     from keylogger import KeyLogger
     from process_monitor import ProcessMonitor
@@ -178,6 +182,19 @@ class TAMClient:
     def _now(self) -> str:
         return datetime.now(self._tz).isoformat()
 
+    def _upload_system_event(self, event_type: str, details: str = "") -> None:
+        if not self._uploader:
+            return
+        self._uploader.upload_event(
+            {
+                "id": uuid.uuid4().hex,
+                "user_id": self._config["user_id"],
+                "event_type": event_type,
+                "timestamp": self._now(),
+                "details": details,
+            }
+        )
+
     def _is_privacy_pause_active(self) -> bool:
         return time.monotonic() < self._privacy_pause_until
 
@@ -264,6 +281,7 @@ class TAMClient:
     def _do_registration(self):
         self._tray = TrayIcon(
             on_name_change_callback=self._handle_name_change,
+            on_server_change_callback=self._handle_server_change,
             on_privacy_pause_callback=self._start_privacy_pause,
         )
         reg_info = self._tray.show_registration_dialog()
@@ -274,9 +292,10 @@ class TAMClient:
 
         server_ip = reg_info["server_ip"]
         display_name = reg_info["display_name"]
+        device_id = get_or_create_device_id()
 
         logger.info("Registering with server %s as '%s'...", server_ip, display_name)
-        result = register_with_server(server_ip, 8007, display_name)
+        result = register_with_server(server_ip, 8007, display_name, device_id)
 
         self._config = {
             "server_ip": server_ip,
@@ -285,13 +304,14 @@ class TAMClient:
             "api_key": result["api_key"],
             "display_name": display_name,
             "local_ip": get_local_ip(),
+            "device_id": device_id,
         }
         save_config(self._config)
         logger.info("Registered successfully. user_id=%s", result["user_id"])
 
-    def _handle_name_change(self, new_name: str):
+    def _handle_name_change(self, new_name: str) -> bool:
         if not new_name:
-            return
+            return False
         success = update_display_name(
             self._server_url,
             self._config["api_key"],
@@ -304,15 +324,93 @@ class TAMClient:
             if self._tray:
                 self._tray.set_current_name(new_name)
             logger.info("Display name changed to '%s'", new_name)
+        else:
+            logger.error("Failed to update display name to '%s'", new_name)
+        return success
+
+    def _handle_server_change(self, new_server_ip: str) -> bool:
+        new_server_ip = new_server_ip.strip()
+        if not new_server_ip:
+            return False
+
+        server_port = self._config.get("server_port", 8007)
+        if new_server_ip == self._config.get("server_ip"):
+            return False
+
+        if not verify_server_reachable(new_server_ip, server_port):
+            logger.error("New server %s:%s is not reachable", new_server_ip, server_port)
+            return False
+
+        old_server_ip = self._config.get("server_ip", "")
+        change_details = f"from={old_server_ip} to={new_server_ip}"
+
+        display_name = self._config.get("display_name", "")
+        device_id = get_or_create_device_id()
+        try:
+            result = register_with_server(new_server_ip, server_port, display_name, device_id)
+        except Exception as exc:
+            logger.error("Re-registration with new server failed: %s", exc)
+            return False
+
+        # Re-registration succeeded, so it's now safe to tell the OLD server the device is
+        # leaving. Doing this before we overwrite self._config/self._uploader below means it
+        # still uses the OLD user_id/api_key/server_url. Sending it earlier (before we knew
+        # re-registration would succeed) left a false record on the old server if the switch
+        # then failed.
+        self._upload_system_event("SERVER_IP_CHANGED", change_details)
+
+        # Best-effort: flush whatever is currently buffered to the OLD server too, since it's
+        # tagged with the OLD user_id and becomes permanently undeliverable once we switch.
+        if self._uploader:
+            try:
+                counts = self._uploader.sync_buffered_data()
+                if any(v > 0 for v in counts.values()):
+                    logger.info("Flushed buffered data to old server before switch: %s", counts)
+            except Exception as exc:
+                logger.warning("Pre-switch buffer flush to old server failed: %s", exc)
+
+        self._config["server_ip"] = new_server_ip
+        self._config["user_id"] = result["user_id"]
+        self._config["api_key"] = result["api_key"]
+        self._config["local_ip"] = get_local_ip()
+        self._config["device_id"] = device_id
+        save_config(self._config)
+        self._apply_server_connection()
+        self._upload_system_event("SERVER_IP_CHANGED", change_details)
+        logger.info("Server IP changed to %s (user_id=%s)", new_server_ip, result["user_id"])
+        return True
+
+    def _apply_server_connection(self):
+        self._server_url = (
+            f"http://{self._config['server_ip']}:{self._config.get('server_port', 8007)}"
+        )
+        if self._uploader:
+            self._uploader.server_url = self._server_url.rstrip("/")
+            self._uploader.api_key = self._config["api_key"]
+        if self._conn_monitor:
+            self._conn_monitor.server_url = self._server_url.rstrip("/")
+            self._conn_monitor._online = False
+        alert_configure(
+            self._server_url,
+            self._config["api_key"],
+            self._config["user_id"],
+        )
+        self._fetch_settings()
+        if self._tray:
+            self._tray.set_current_server_ip(self._config["server_ip"])
 
     def _fetch_settings(self):
         try:
             settings = fetch_server_settings(self._server_url, self._config["api_key"])
-            if settings.get("timezone"):
-                self._tz_str = settings["timezone"]
+            # Server stores these under "system_timezone" / "capture_interval_sec"; the
+            # short aliases are checked too for forward/backward compatibility.
+            tz_value = settings.get("system_timezone") or settings.get("timezone")
+            if tz_value:
+                self._tz_str = tz_value
                 self._tz = ZoneInfo(self._tz_str)
-            if settings.get("capture_interval"):
-                self._capture_interval = int(settings["capture_interval"])
+            interval_value = settings.get("capture_interval_sec") or settings.get("capture_interval")
+            if interval_value:
+                self._capture_interval = int(interval_value)
             if settings.get("image_quality"):
                 self._image_quality = int(settings["image_quality"])
             if settings.get("image_max_width"):
@@ -536,6 +634,7 @@ class TAMClient:
             self._config = load_config()
             self._tray = TrayIcon(
                 on_name_change_callback=self._handle_name_change,
+                on_server_change_callback=self._handle_server_change,
                 on_privacy_pause_callback=self._start_privacy_pause,
             )
 
@@ -543,6 +642,7 @@ class TAMClient:
             f"http://{self._config['server_ip']}:{self._config.get('server_port', 8007)}"
         )
         self._tray.set_current_name(self._config.get("display_name", ""))
+        self._tray.set_current_server_ip(self._config.get("server_ip", ""))
 
         alert_configure(
             self._server_url,
@@ -585,14 +685,7 @@ class TAMClient:
         except Exception as exc:
             logger.warning("Mouse listener not started (idle detection keyboard-only): %s", exc)
 
-        start_event = {
-            "id": uuid.uuid4().hex,
-            "user_id": self._config["user_id"],
-            "event_type": "APP_START",
-            "timestamp": self._now(),
-            "details": f"ip={get_local_ip()}",
-        }
-        self._uploader.upload_event(start_event)
+        self._upload_system_event("APP_START", f"ip={get_local_ip()}")
 
         threads = [
             threading.Thread(target=self._screen_capture_thread, daemon=True, name="capture"),

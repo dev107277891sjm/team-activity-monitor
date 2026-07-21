@@ -556,6 +556,16 @@ label.toggle-label {
     transform: translateX(-4px) rotate(45deg);
     border: none;
 }
+.timeline-event-marker.server-change {
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 12px solid #AB47BC;
+    transform: translateX(-6px);
+    box-shadow: 0 0 8px rgba(171, 71, 188, 0.6);
+    z-index: 3;
+}
 .timeline-event-marker.default {
     width: 6px;
     height: 6px;
@@ -842,6 +852,7 @@ label.toggle-label {
 .event-icon.app_killed { color: var(--color-alert); }
 .event-icon.app_crash { color: var(--color-alert); }
 .event-icon.login { color: #AB47BC; }
+.event-icon.server_change { color: #AB47BC; }
 .event-icon.default { color: var(--text-secondary); }
 
 /* --- Pagination --- */

@@ -47,13 +47,16 @@ class TrayIcon:
     def __init__(
         self,
         on_name_change_callback: Callable | None = None,
+        on_server_change_callback: Callable | None = None,
         on_privacy_pause_callback: Callable[[], bool] | None = None,
     ):
         self._on_name_change = on_name_change_callback
+        self._on_server_change = on_server_change_callback
         self._on_privacy_pause = on_privacy_pause_callback
         self._tray: pystray.Icon | None = None
         self._status = "recording"
         self._current_name = ""
+        self._current_server_ip = ""
 
     def _build_menu(self):
         status_text = {
@@ -67,6 +70,7 @@ class TrayIcon:
             pystray.MenuItem(status_text, None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Change Name...", self._on_change_name),
+            pystray.MenuItem("Change Server IP...", self._on_change_server),
             pystray.MenuItem("About", self._on_about),
         )
 
@@ -97,10 +101,55 @@ class TrayIcon:
     def set_current_name(self, name: str):
         self._current_name = name
 
+    def set_current_server_ip(self, server_ip: str):
+        self._current_server_ip = server_ip
+
+    @staticmethod
+    def _show_message(title: str, message: str, msg_type: str = "info") -> None:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        if msg_type == "error":
+            messagebox.showerror(title, message, parent=root)
+        elif msg_type == "warning":
+            messagebox.showwarning(title, message, parent=root)
+        else:
+            messagebox.showinfo(title, message, parent=root)
+        root.destroy()
+
     def _on_change_name(self, icon, item):
         result = self.show_name_change_dialog(self._current_name)
-        if result and self._on_name_change:
-            self._on_name_change(result)
+        if not result:
+            return
+        if not self._on_name_change:
+            return
+        success = self._on_name_change(result)
+        if success:
+            self._show_message("TAM", "Display name updated successfully.")
+        else:
+            self._show_message(
+                "TAM",
+                "Failed to update display name on the server.\n"
+                "Check that the server is online and try again.",
+                "error",
+            )
+
+    def _on_change_server(self, icon, item):
+        result = self.show_server_change_dialog(self._current_server_ip)
+        if not result:
+            return
+        if not self._on_server_change:
+            return
+        success = self._on_server_change(result)
+        if success:
+            self._show_message("TAM", "Server IP updated successfully.")
+        else:
+            self._show_message(
+                "TAM",
+                "Failed to change server IP.\n"
+                "Check that the new server is online and reachable, then try again.",
+                "error",
+            )
 
     def _on_about(self, icon, item):
         def _show():
@@ -267,3 +316,70 @@ class TrayIcon:
         thread.join()
 
         return result.get("name")
+
+    def show_server_change_dialog(self, current_server_ip: str) -> str | None:
+        result = {}
+
+        def _dialog():
+            root = tk.Tk()
+            root.title("TAM - Change Server IP")
+            root.resizable(False, False)
+            root.attributes("-topmost", True)
+
+            frame = ttk.Frame(root, padding=20)
+            frame.grid(sticky="nsew")
+
+            ttk.Label(frame, text="Current Server IP:").grid(row=0, column=0, sticky="w", pady=5)
+            ttk.Label(frame, text=current_server_ip, foreground="gray").grid(
+                row=0, column=1, sticky="w", pady=5, padx=(10, 0)
+            )
+
+            ttk.Label(frame, text="New Server IP:").grid(row=1, column=0, sticky="w", pady=5)
+            server_entry = ttk.Entry(frame, width=30)
+            server_entry.grid(row=1, column=1, pady=5, padx=(10, 0))
+
+            ttk.Label(
+                frame,
+                text="The app will re-register with the new server\nusing your current display name.",
+                foreground="gray",
+                wraplength=320,
+                justify="left",
+            ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
+            def on_save():
+                new_ip = server_entry.get().strip()
+                if not new_ip:
+                    messagebox.showwarning("Input Error", "Server IP is required.", parent=root)
+                    return
+                if new_ip == current_server_ip:
+                    messagebox.showwarning(
+                        "Input Error",
+                        "New server IP is the same as the current one.",
+                        parent=root,
+                    )
+                    return
+                result["server_ip"] = new_ip
+                root.destroy()
+
+            def on_cancel():
+                root.destroy()
+
+            btn_frame = ttk.Frame(frame)
+            btn_frame.grid(row=3, column=0, columnspan=2, pady=(15, 0))
+            ttk.Button(btn_frame, text="Save", command=on_save).pack(side="left", padx=5)
+            ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="left", padx=5)
+
+            root.update_idletasks()
+            w = root.winfo_width()
+            h = root.winfo_height()
+            x = (root.winfo_screenwidth() // 2) - (w // 2)
+            y = (root.winfo_screenheight() // 2) - (h // 2)
+            root.geometry(f"+{x}+{y}")
+
+            root.mainloop()
+
+        thread = threading.Thread(target=_dialog)
+        thread.start()
+        thread.join()
+
+        return result.get("server_ip")

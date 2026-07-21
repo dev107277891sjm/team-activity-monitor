@@ -509,16 +509,20 @@
             const evType = (ev.event_type || ev.type || "").toLowerCase();
             let cls = "default";
             let label = ev.event_type || ev.type || "event";
-            if (evType.includes("boot") || evType.includes("start")) {
+            if (evType.includes("boot") || (evType.includes("start") && !evType.includes("server"))) {
                 cls = "boot";
                 label = evType.includes("app") ? "App Start" : "Start";
+            } else if (evType.includes("server_ip") || (evType.includes("server") && evType.includes("ip"))) {
+                cls = "server-change";
+                label = "Server IP Changed";
             } else if (evType.includes("shutdown") || evType.includes("off")) cls = "shutdown";
             else if (evType.includes("kill") || evType.includes("crash") || evType.includes("stop")) cls = "alert";
             else if (evType.includes("restart") || evType.includes("reboot")) cls = "restart";
             else if (evType.includes("heartbeat")) return;
             marker.className = "timeline-event-marker " + cls;
             marker.style.left = leftPct + "%";
-            marker.title = _fmtTime(rawTime) + " – " + label;
+            const detailText = ev.details ? " – " + ev.details : "";
+            marker.title = _fmtTime(rawTime) + " – " + label + detailText;
             evRow.appendChild(marker);
         });
     }
@@ -970,6 +974,7 @@
         const t = evType.toLowerCase();
         if (t.includes("boot") || t.includes("startup")) return "boot";
         if (t.includes("shutdown")) return "shutdown";
+        if (t.includes("server_ip") || (t.includes("server") && t.includes("ip"))) return "server_change";
         if (t.includes("app_start") || t.includes("start")) return "app_start";
         if (t.includes("app_stop") || t.includes("stop")) return "app_stop";
         if (t.includes("kill")) return "app_killed";

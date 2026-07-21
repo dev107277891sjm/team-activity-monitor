@@ -15,13 +15,16 @@ def detect_local_ip() -> str:
         return "127.0.0.1"
 
 
-def register_with_server(server_ip: str, server_port: int, display_name: str) -> dict:
+def register_with_server(
+    server_ip: str, server_port: int, display_name: str, device_id: str = ""
+) -> dict:
     url = f"http://{server_ip}:{server_port}/api/register"
     local_ip = detect_local_ip()
 
     payload = {
         "display_name": display_name,
         "local_ip": local_ip,
+        "device_id": device_id,
     }
 
     resp = requests.post(url, json=payload, timeout=10)
@@ -39,10 +42,18 @@ def register_with_server(server_ip: str, server_port: int, display_name: str) ->
     }
 
 
+def verify_server_reachable(server_ip: str, server_port: int) -> bool:
+    try:
+        resp = requests.get(f"http://{server_ip}:{server_port}/ping", timeout=5)
+        return resp.status_code == 200
+    except requests.RequestException:
+        return False
+
+
 def update_display_name(server_url: str, api_key: str, user_id: str, new_name: str) -> bool:
     try:
         resp = requests.put(
-            f"{server_url}/api/users/{user_id}",
+            f"{server_url}/api/users/{user_id}/name",
             headers={"X-API-Key": api_key, "Content-Type": "application/json"},
             json={"display_name": new_name},
             timeout=10,
